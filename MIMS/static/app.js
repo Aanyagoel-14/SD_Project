@@ -1,72 +1,453 @@
+// MIMS - Mock Interview Management System (Team T065). Plain JavaScript, no build step.
+// One screen is rendered at a time from `state` (fetched from /api/state) and `view`.
+
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let state, page='Overview', filters={}, registering=false;
-const initials=n=>n.split(' ').filter(w=>!['Dr.','Prof.'].includes(w)).slice(0,2).map(w=>w[0]).join('');
-const date=d=>new Date(d+'T12:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
-const time=t=>{let [h,m]=t.split(':').map(Number);return `${h%12||12}:${String(m).padStart(2,'0')} ${h<12?'AM':'PM'}`};
-const options=(rows,key='id',label='name',selected)=>rows.map(r=>`<option value="${esc(r[key])}" ${String(selected)===String(r[key])?'selected':''}>${esc(r[label])}</option>`).join('');
-const logo=()=>'<div class="logo"><i>◎</i><span>MIMS<small>LNMIIT · JAIPUR</small></span></div>';
-const stars=n=>`<span class="stars" title="${n} of 5">${'★'.repeat(n)}${'☆'.repeat(5-n)}</span>`;
-const overall=i=>i.technical?((i.technical+i.communication+i.problem_solving)/3).toFixed(1):'';
-const SCORES=[['technical','Technical knowledge'],['communication','Communication'],['problem_solving','Problem solving']];
-async function api(path,data){let r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json'}:{},body:data?JSON.stringify(data):undefined});let v=await r.json();if(!r.ok){if(r.status===401&&path==='state'){login();return null}throw Error(v.error||'Request failed.')}return v;}
-function toast(message){$('#toast').textContent=message;$('#toast').style.display='block';clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>$('#toast').style.display='none',4500)}
-async function refresh(){try{let s=await api('state');if(s){state=s;render()}}catch(e){toast(e.message)}}
-function login(){state=null;$('#app').innerHTML=`<div class="login"><section class="login-story">${logo()}<div><div class="eyebrow" style="color:#d5bb83">Practise today. Perform tomorrow.</div><h1>Walk into every interview prepared.</h1><p>Book a mock interview with an experienced interviewer, get structured feedback, and sharpen your answers before placement season at LNMIIT.</p><div class="inline" style="margin-top:30px;font-size:12px;color:#c2cde0"><span>✓ Technical &amp; HR rounds</span><span>✓ Written feedback</span></div></div><small style="color:#a5b3cb">The LNM Institute of Information Technology, Jaipur</small></section><section class="login-form"><div><div class="eyebrow muted">MOCK INTERVIEW MANAGEMENT</div><h1>${registering?'Let’s get you interview-ready':'Welcome back.'}</h1><p class="muted" style="font-size:13px">${registering?'Create your student account to book a mock interview.':'Sign in to your interview portal.'}</p><form id="auth"><div class="fields">${registering?'<label>Full name<input name="name" required autocomplete="name" placeholder="Your full name" maxlength="100"></label>':''}<label>Email address<input type="email" name="email" required autocomplete="username" placeholder="you@example.com"></label><label>Password<input type="password" name="password" required minlength="8" autocomplete="${registering?'new-password':'current-password'}" placeholder="Enter your password"></label></div><button class="full">${registering?'Create student account':'Sign in to your portal'} →</button><div id="auth-error" class="error" role="alert"></div></form><p class="hint">${registering?'Already have an account?':'New to MIMS?'} <button class="subtle" id="toggle-auth">${registering?'Sign in':'Create a student account'}</button></p><div class="demo"><div class="eyebrow muted">EXPLORE THE WORKING DEMO</div><div class="demo-grid">${['Student','Interviewer','Admin','Management'].map(r=>`<button data-demo="${r}">${r} portal ↗</button>`).join('')}</div><p class="hint">Demo password: <strong>Demo@123</strong><br>Seeded accounts only. All changes are saved locally.</p></div></div></section></div>`;
-$('#toggle-auth').onclick=()=>{registering=!registering;login()};
-$('#auth').onsubmit=async e=>{e.preventDefault();let b=e.target.querySelector('button');b.disabled=true;try{await api(registering?'register':'login',Object.fromEntries(new FormData(e.target)));page='Overview';filters={};await refresh()}catch(err){$('#auth-error').textContent=err.message}finally{b.disabled=false}};
-document.querySelectorAll('[data-demo]').forEach(b=>b.onclick=()=>{registering=false;login();$('#auth [name=email]').value=b.dataset.demo.toLowerCase()+'@mims.demo';$('#auth [name=password]').value='Demo@123';$('#auth').requestSubmit()});}
-function navigate(p){page=p;render()}
-function navItems(){const r=state.user.role;return r==='Student'?['Overview','Find an interviewer','My interviews','Feedback','Notifications']:r==='Interviewer'?['Overview','My schedule','Interviews','My profile','Notifications']:r==='Admin'?['Overview','Interviews','Schedules','Interviewers','Users','Reports','Notifications']:['Overview','Reports'];}
-function render(){if(!state)return;const r=state.user.role,unread=state.notifications.filter(n=>n.unread).length;const icons={'Overview':'▦','Find an interviewer':'⌕','My interviews':'▤','Interviews':'▤','Feedback':'✎','Notifications':'♧','My schedule':'▦','Schedules':'▦','Users':'♙','Reports':'▥','Interviewers':'♧','My profile':'♙'};
-$('#app').innerHTML=`<div class="shell"><aside class="sidebar">${logo()}<div class="nav-label">${esc(r.toUpperCase())} WORKSPACE</div><nav class="nav">${navItems().map(p=>`<button data-nav="${p}" class="${page===p?'active':''}"><span>${icons[p]}</span>${p}${p==='Notifications'&&unread?` <small>${unread}</small>`:''}</button>`).join('')}</nav><div class="side-bottom"><div class="support"><strong>Practice makes placement.</strong>Structured mock interviews and honest feedback, one round at a time.</div><div class="identity"><span class="avatar">${esc(initials(state.user.name))}</span><div><strong>${esc(state.user.name)}</strong><div class="hint">${r} account</div></div></div><button id="logout" class="subtle" style="font-size:11px;margin-top:12px">↪ Sign out</button></div></aside><main class="main"><header class="topbar"><span>Workspace <span style="margin:0 12px">/</span> <strong>${esc(page)}</strong></span><div class="top-actions"><span>${date(state.today)}</span><button class="secondary" id="refresh" style="font-size:11px;padding:8px 12px">↻ Refresh</button><button class="subtle" id="top-logout" title="Sign out">↪</button><span class="avatar">${esc(initials(state.user.name))}</span></div></header><div class="content">${content()}<footer class="foot"><span>MIMS · Practice with purpose.</span><span>LNMIIT Jaipur · Local prototype</span></footer></div></main></div>`;
-document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>navigate(b.dataset.nav));
-const logout=async()=>{await api('logout',{});login()};if($('#logout'))$('#logout').onclick=logout;$('#top-logout').onclick=logout;$('#refresh').onclick=refresh;
-bind();}
-function heading(title,sub,extra=''){return `<div class="heading"><div><div class="eyebrow muted">YOUR INTERVIEW PREP SPACE</div><h1>${title}</h1><p>${sub}</p></div>${extra||'<span class="badge">● Placement preparation</span>'}</div>`}
-function stats(){let a=state.interviews,s=state.slots;if(state.user.role==='Interviewer')s=s.filter(x=>x.interviewer===state.user.id);const active=a.filter(x=>['Confirmed','Pending'].includes(x.status));const vals=state.user.role==='Student'?[['Upcoming interviews',active.length,'Your next rounds, scheduled'],['Interviewers',state.interviewers.filter(c=>c.active).length,'Here to help you rehearse'],['Available slots',s.filter(x=>x.available&&future(x)).length,'Pick a time that suits you'],['Feedback received',a.filter(x=>x.technical).length,'Lessons from every round']]:[['Total interviews',a.length,'Across all rounds'],['Confirmed',active.length,'Scheduled sessions'],['Available slots',s.filter(x=>x.available&&future(x)).length,'Open for booking'],['Completed',a.filter(x=>x.status==='Completed').length,'Rounds finished']];return `<div class="stats">${vals.map(([k,v,s])=>`<div class="stat"><div class="stat-label">${k}<span style="color:#8394b5">↗</span></div><div class="value">${v}</div><small>${s}</small></div>`).join('')}</div>`}
-function content(){const r=state.user.role;
-if(page==='Overview')return heading(`Hello, ${esc(state.user.name.split(' ')[0])}.`,r==='Student'?'Every real interview gets easier after a practice one. Let’s book your next round.':'Everything you need to keep mock interviews running smoothly.')+`<section class="hero"><div><span class="eyebrow" style="color:#566f98">${r==='Student'?'PLACEMENT SEASON STARTS HERE':'ONE SCHEDULE. CLEAR OUTCOMES.'}</span><h2>${r==='Student'?'Practise the pressure.<br>Perform with ease.':'Keep every mock interview on track.'}</h2><p>${r==='Student'?'From technical rounds to HR conversations, our interviewers help you rehearse, reflect and improve before the real thing.':'Manage interviewer availability, track sessions, and make sure every student leaves with written feedback.'}</p></div><div class="hero-art" aria-hidden="true">◎</div></section>`+stats()+ (r==='Student'?`<div class="section-title"><div><h2>Find your interviewer</h2><p>Experienced people. Real questions. A time that suits you.</p></div><button class="subtle" data-go="Find an interviewer">View all →</button></div>`+interviewerCards(true):'')+`<div class="section-title"><div><h2>${r==='Student'?'Your upcoming interviews':'Interview activity'}</h2><p>Your sessions, all in one place.</p></div>${r==='Admin'?'<button id="offline">+ Offline registration</button>':''}</div>`+interviewTable(state.interviews.filter(a=>['Confirmed','Pending'].includes(a.status)).slice(0,5));
-if(page==='Find an interviewer')return heading('Find your interviewer.','Choose a round. Pick a time. Rehearse with intent.')+filterBar()+interviewerCards();
-if(['Interviews','My interviews'].includes(page))return heading(r==='Student'?'Your interviews.':'Interview management.','View sessions, track outcomes, and manage changes.',r==='Admin'?'<button id="offline">+ Offline registration</button>':'')+`<div class="filters"><label>Status<select id="status-filter"><option value="">All statuses</option>${['Pending','Confirmed','Completed','Cancelled','No-show'].map(x=>`<option ${filters.status===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Round<select id="round-filter"><option value="">All rounds</option>${state.rounds.map(x=>`<option ${filters.round===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Search student or interviewer<input id="interview-search" placeholder="Search by name…" value="${esc(filters.appSearch||'')}"></label></div>`+interviewTable(state.interviews.filter(a=>(!filters.status||a.status===filters.status)&&(!filters.round||a.round===filters.round)&&(!filters.appSearch||(a.student_name+' '+a.interviewer_name).toLowerCase().includes(filters.appSearch.toLowerCase()))));
-if(page==='Feedback')return heading('Your feedback.','What went well, and what to work on before the next round.')+feedbackCards(state.interviews.filter(a=>a.status==='Completed'));
-if(page==='Notifications')return heading('Your updates.','Booking confirmations, status changes and new feedback, in one place.','<button id="read" class="secondary">Mark all as read</button>')+`<div class="panel">${state.notifications.length?state.notifications.map(n=>`<div class="notification"><span class="dot" style="opacity:${n.unread?1:.2}"></span><div>${esc(n.message)}<small>${esc(n.created)} UTC · ${n.unread?'Unread':'Read'}</small></div></div>`).join(''):'<div class="empty">You’re all caught up. New interview updates will appear here.</div>'}</div>`;
-if(page==='Schedules')return heading('A well-planned day.',`Assign working schedules and automatically publish ${state.duration}-minute interview slots.`,'<button id="assign">+ Assign schedule</button>')+`<div class="schedule-grid">${Object.entries({Morning:'09:00 – 13:00',Afternoon:'13:00 – 17:00',Evening:'17:00 – 20:00'}).map(([k,v])=>`<div class="schedule"><span class="eyebrow muted">${k}</span><h2 style="margin-top:12px">${v}</h2><p>${state.duration}-minute mock interview slots</p></div>`).join('')}</div><div class="section-title"><h2>Schedule assignments</h2></div><div class="table-wrap"><table><thead><tr><th>INTERVIEWER</th><th>SCHEDULE</th><th>EFFECTIVE FROM</th><th>UNTIL</th></tr></thead><tbody>${state.assignments.map(a=>`<tr><td><strong>${esc(state.interviewers.find(c=>c.id===a.interviewer)?.name)}</strong></td><td>${a.shift}</td><td>${date(a.start)}</td><td>${date(a.end)}</td></tr>`).join('')}</tbody></table></div>`;
-if(page==='My schedule'){let slots=state.slots.filter(s=>s.interviewer===state.user.id&&s.date===(filters.date||state.today));return heading('Your day, at a glance.','View your assigned schedule and booking availability.')+`<div class="filters"><label>Date<input type="date" id="schedule-date" value="${esc(filters.date||state.today)}" min="${state.today}"></label></div><div class="panel"><h2>${date(filters.date||state.today)}</h2><div class="slots" style="margin-top:20px">${slots.map(s=>`<span class="pill" style="padding:14px;background:${s.available?'#e7ecf5':'#f3e8df'}">${time(s.start)} – ${time(s.end)} · ${s.available?'Available':'Booked'}</span>`).join('')||'<p>No schedule assigned on this date.</p>'}</div></div>`+interviewTable(state.interviews.filter(a=>a.date===(filters.date||state.today)));}
-if(page==='Interviewers')return heading('People who interview.','Manage interviewer profiles, expertise and locations.')+interviewerCards(true,true);
-if(page==='My profile'){let c=state.interviewers.find(c=>c.id===state.user.id);return heading('Your interviewer profile.','Help students understand what you can help them practise.')+`<div class="panel"><h2>${esc(c.name)}</h2><p>${esc(c.expertise)}</p><p>${esc(c.bio)}</p><p>${esc(c.location)}</p><button data-profile="${c.id}">Edit profile</button></div>`;}
-if(page==='Users')return heading('Your community.','Manage account access. Public registration creates student accounts only.')+`<div class="table-wrap"><table><thead><tr><th>NAME</th><th>EMAIL</th><th>ROLE</th><th>ACCESS</th><th>ACTION</th></tr></thead><tbody>${state.users.map(u=>`<tr><td><strong>${esc(u.name)}</strong></td><td>${esc(u.email)}</td><td>${u.role}</td><td>${u.active?'Active':'Disabled'}</td><td>${u.id!==state.user.id?`<button class="secondary" data-user="${u.id}" data-active="${u.active?0:1}">${u.active?'Disable':'Activate'}</button>`:'Current account'}</td></tr>`).join('')}</tbody></table></div>`;
-if(page==='Reports')return reports();return '';}
-function future(s){const now=new Date().toLocaleString('sv-SE',{timeZone:'Asia/Kolkata'}).slice(0,16).replace(' ','T');return s.date+'T'+s.start>now;}
-function filterBar(){return `<div class="filters"><label>Search interviewers<input id="search" placeholder="Name or expertise…" value="${esc(filters.search||'')}"></label><label>Interview date<input type="date" id="date-filter" min="${state.today}" value="${esc(filters.date||state.today)}"></label><label>From<input type="time" id="from-filter" value="${esc(filters.from||'')}"></label><label>Until<input type="time" id="until-filter" value="${esc(filters.until||'')}"></label><button id="clear-filter" class="secondary">Reset</button></div>`}
-function available(iid,all=false){return state.slots.filter(s=>s.interviewer===iid&&s.available&&future(s)&&(all||s.date===(filters.date||state.today))&&(!filters.from||s.start>=filters.from)&&(!filters.until||s.end<=filters.until));}
-function interviewerCards(preview=false,edit=false){let cs=state.interviewers.filter(c=>(edit||c.active)&&(!filters.search||(c.name+' '+c.expertise).toLowerCase().includes(filters.search.toLowerCase())));if(!preview)cs=cs.filter(c=>available(c.id).length);return `<div class="cards">${cs.map((c,i)=>{const slots=available(c.id,preview);return `<article class="card"><div class="person"><span class="avatar">${esc(initials(c.name))}</span><div><h3>${esc(c.name)}</h3><div class="specialty">${esc(c.expertise)}</div></div></div><p>${esc(c.bio)}</p><div class="location">⌖ ${esc(c.location)}</div><div class="slot-label"><span>${slots.length?'NEXT AVAILABLE · '+date(slots[0].date):'NO AVAILABLE SLOTS'}</span><span style="color:#7590b3">${state.duration} min</span></div><div class="slots">${slots.slice(0,3).map(s=>`<button data-book="${s.id}" ${edit?'disabled':''}>${time(s.start)}</button>`).join('')}</div>${edit?`<button class="full secondary" data-profile="${c.id}">Edit profile</button>`:`<button class="full secondary" data-interviewer="${c.id}" ${!slots.length?'disabled':''}>View available slots <span style="float:right">↗</span></button>`}</article>`}).join('')||'<div class="panel empty" style="grid-column:1/-1">No interviewers match this date and time. Try another date or a wider time range.</div>'}</div>`;}
-function interviewTable(apps){const r=state.user.role;return `<div class="table-wrap">${apps.length?`<table><thead><tr><th>${r==='Student'?'INTERVIEWER':'STUDENT / INTERVIEWER'}</th><th>DATE & TIME</th><th>ROUND</th><th>CHANNEL</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>${apps.map(a=>`<tr><td><strong>${esc(r==='Student'?a.interviewer_name:a.student_name)}</strong><small>${r==='Student'?'#'+a.id+' · '+esc(a.target||'Mock interview'):esc(a.interviewer_name)+(a.target?' · '+esc(a.target):'')}</small></td><td><strong>${date(a.date)}</strong><small>${time(a.start)} – ${time(a.end)}</small></td><td>${esc(a.round)}</td><td>${a.channel}</td><td><span class="status ${a.status}">${a.status}</span>${a.technical?`<small style="display:block;margin-top:5px">★ ${overall(a)} / 5</small>`:''}</td><td><div class="row-actions">${r!=='Management'&&['Pending','Confirmed'].includes(a.status)?`${r!=='Interviewer'?`<button class="secondary" data-reschedule="${a.id}">Reschedule</button>`:''}${r==='Student'?`<button class="subtle" data-cancel="${a.id}">Cancel</button>`:`<button class="secondary" data-status="${a.id}">Update status</button>`}`:a.status==='Completed'&&['Interviewer','Admin'].includes(r)?`<button class="secondary" data-feedback="${a.id}">${a.technical?'Edit feedback':'Give feedback'}</button>`:a.status==='Completed'&&a.technical?`<button class="secondary" data-view="${a.id}">View feedback</button>`:a.status==='Completed'?'<small>Awaiting feedback</small>':'<small>—</small>'}</div></td></tr>`).join('')}</tbody></table>`:'<div class="empty">No interviews here yet. Your next practice round is a few clicks away.</div>'}</div>`;}
-function feedbackBody(a){return a.technical?`${SCORES.map(([k,l])=>`<div class="score"><span>${l}</span>${stars(a[k])}</div>`).join('')}<div class="score"><span>Overall</span><span class="overall">${overall(a)}<span class="muted" style="font-size:13px"> / 5</span></span></div><p class="quote"><strong>What went well</strong>${esc(a.strengths||'—')}</p><p class="quote"><strong>What to work on</strong>${esc(a.improvements||'—')}</p>`:'<p class="hint" style="margin-top:14px">Your interviewer has not recorded feedback yet. It will appear here once submitted.</p>';}
-function feedbackCards(apps){return apps.length?`<div class="feedback-grid">${apps.map(a=>`<article class="card"><div class="person"><span class="avatar">${esc(initials(a.interviewer_name))}</span><div><h3>${esc(a.interviewer_name)}</h3><div class="specialty">${esc(a.round)} round · ${date(a.date)} · ${time(a.start)}</div></div></div>${a.target?`<p style="min-height:0">${esc(a.target)}</p>`:''}${feedbackBody(a)}</article>`).join('')}</div>`:'<div class="panel empty">Feedback appears here after your first completed mock interview.</div>';}
-function reports(){let a=state.interviews,slots=state.slots,used=slots.filter(s=>!s.available).length,done=a.filter(x=>x.status==='Completed'),fb=done.filter(x=>x.technical),mean=k=>fb.length?(fb.reduce((t,x)=>t+x[k],0)/fb.length).toFixed(1):'–';return heading('The bigger picture.','Interview activity, outcomes, feedback coverage and slot utilization.','<button id="export" class="secondary">↓ Export CSV</button>')+stats()+`<div class="report-grid"><div class="panel"><h2>Interview outcomes</h2><p>All recorded sessions, grouped by current status.</p>${['Confirmed','Pending','Completed','Cancelled','No-show'].map(k=>{let n=a.filter(x=>x.status===k).length;return `<div style="display:flex;justify-content:space-between;font-size:12px"><span>${k}</span><strong>${n}</strong></div><div class="bar"><span style="width:${a.length?n/a.length*100:0}%"></span></div>`}).join('')}<h3>Rounds</h3><p>${state.rounds.map(k=>`${k} <strong>${a.filter(x=>x.round===k).length}</strong>`).join(' &nbsp; · &nbsp; ')}</p></div><div class="panel"><h2>Slot utilization</h2><div class="value" style="font-size:49px;margin:30px 0 5px">${slots.length?Math.round(used/slots.length*100):0}<span class="muted" style="font-size:24px">%</span></div><p>${used} occupied / ${slots.length} slots published from today onward. Completed and no-show interviews retain their slot.</p><div class="bar"><span style="width:${slots.length?used/slots.length*100:0}%"></span></div><h3>Registration channels</h3><p>Online <strong>${a.filter(x=>x.channel==='Online').length}</strong> &nbsp; · &nbsp; Offline <strong>${a.filter(x=>x.channel==='Offline').length}</strong></p></div></div><div class="report-grid" style="margin-top:20px"><div class="panel"><h2>Average scores</h2><p>Across all interviews with recorded feedback.</p>${SCORES.map(([k,l])=>`<div class="score"><span>${l}</span><strong>${mean(k)}</strong></div>`).join('')}</div><div class="panel"><h2>Feedback coverage</h2><div class="value" style="font-size:49px;margin:30px 0 5px">${done.length?Math.round(fb.length/done.length*100):0}<span class="muted" style="font-size:24px">%</span></div><p>${fb.length} of ${done.length} completed interviews have written feedback.</p><div class="bar"><span style="width:${done.length?fb.length/done.length*100:0}%"></span></div></div></div>${state.user.role==='Admin'?`<div class="section-title"><h2>Administrative audit trail</h2></div><div class="panel">${state.audit.map(l=>`<div class="notification"><div>${esc(l.action)}<small>${esc(l.name)} · ${esc(l.created)} UTC</small></div></div>`).join('')||'<p>Administrative activity will appear here.</p>'}</div>`:''}`;}
-function modal(title,body,submitLabel,onSubmit){const d=$('#modal');d.innerHTML=`<button class="subtle close" aria-label="Close dialog">×</button><h2>${title}</h2><form id="modal-form">${body}<div class="error" id="modal-error" role="alert"></div><div class="modal-actions"><button type="button" class="secondary" id="dismiss">Back</button>${submitLabel?`<button id="submit-modal">${submitLabel}</button>`:''}</div></form>`;d.querySelector('.close').onclick=()=>d.close();$('#dismiss').onclick=()=>d.close();$('#modal-form').onsubmit=async e=>{e.preventDefault();let b=$('#submit-modal');if(b)b.disabled=true;try{await onSubmit(Object.fromEntries(new FormData(e.target)));d.close();await refresh()}catch(err){$('#modal-error').textContent=err.message}finally{if(b)b.disabled=false}};if(!d.open)d.showModal();}
-function roundSelect(){return `<label>Interview round<select name="round" required>${state.rounds.map(r=>`<option>${r}</option>`).join('')}</select></label>`}
-function book(sid){let s=state.slots.find(s=>s.id===Number(sid)),c=state.interviewers.find(c=>c.id===s.interviewer);modal('Lock in your practice round.',`<p class="muted">${esc(c.name)}<br>${date(s.date)} · ${time(s.start)} – ${time(s.end)}</p><div class="fields">${roundSelect()}<label>Role or company you are preparing for <span class="muted">Optional</span><input name="target" maxlength="120" placeholder="e.g. SDE Intern · Product company"></label><label>Anything your interviewer should focus on? <span class="muted">Optional</span><textarea name="notes" maxlength="1000" placeholder="Topics, weak areas, or the kind of questions you want to practise."></textarea></label></div><p class="hint">Your interview is confirmed immediately. You can reschedule or cancel it from My interviews.</p>`,'Confirm interview',async d=>{await api('book',{...d,slot:sid});toast('Your mock interview is confirmed.');page='My interviews'});}
-function viewSlots(iid){const c=state.interviewers.find(c=>c.id===Number(iid)),slots=available(c.id,true);modal(esc(c.name),`<p class="muted">${esc(c.bio)}</p><p class="hint">${esc(c.location)} · ${state.duration}-minute sessions</p><div class="fields"><label>Choose an available date and time<select id="slot-picker">${slots.map(s=>`<option value="${s.id}">${date(s.date)} · ${time(s.start)} – ${time(s.end)}</option>`).join('')}</select></label></div><button type="button" class="full" id="choose-slot">Continue to booking →</button>`,'',null);$('#choose-slot').onclick=()=>book($('#slot-picker').value);}
-function reschedule(id){let a=state.interviews.find(a=>a.id===Number(id)),slots=available(a.interviewer,true);modal('Find a better time.',`<p class="muted">${esc(a.interviewer_name)}<br>Currently ${date(a.date)} · ${time(a.start)}</p><div class="fields"><label>New session<select name="slot" required ${!slots.length?'disabled':''}>${slots.map(s=>`<option value="${s.id}">${date(s.date)} · ${time(s.start)} – ${time(s.end)}</option>`).join('')}</select></label></div>${!slots.length?'<p class="error">No alternative slots are available. Your existing interview is unchanged.</p>':''}`,slots.length?'Confirm reschedule':'',async d=>{await api('reschedule',{id,...d});toast('Interview rescheduled. Your previous slot is available again.')});}
-function feedbackForm(id){let a=state.interviews.find(a=>a.id===Number(id));modal('Record interview feedback.',`<p class="muted">${esc(a.student_name)} · ${esc(a.round)} round<br>${date(a.date)} · ${time(a.start)}</p><div class="fields">${SCORES.map(([k,l])=>`<label>${l} <span class="muted">1 = needs work, 5 = excellent</span><select name="${k}" required>${[1,2,3,4,5].map(n=>`<option ${a[k]===n?'selected':''}>${n}</option>`).join('')}</select></label>`).join('')}<label>What went well<textarea name="strengths" maxlength="1000">${esc(a.strengths||'')}</textarea></label><label>What to work on<textarea name="improvements" maxlength="1000">${esc(a.improvements||'')}</textarea></label></div><p class="hint">The student is notified as soon as feedback is saved. You can edit it later.</p>`,'Save feedback',async d=>{await api('feedback',{id,...d});toast('Feedback saved and shared with the student.')});}
-function viewFeedback(id){let a=state.interviews.find(a=>a.id===Number(id));modal('Interview feedback.',`<p class="muted">${esc(a.interviewer_name)} · ${esc(a.round)} round<br>${date(a.date)} · ${time(a.start)}</p>${feedbackBody(a)}`,'',null);}
-function bind(){
-document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>navigate(b.dataset.go));
-document.querySelectorAll('[data-book]').forEach(b=>b.onclick=()=>book(b.dataset.book));
-document.querySelectorAll('[data-interviewer]').forEach(b=>b.onclick=()=>viewSlots(b.dataset.interviewer));
-document.querySelectorAll('[data-reschedule]').forEach(b=>b.onclick=()=>reschedule(b.dataset.reschedule));
-document.querySelectorAll('[data-feedback]').forEach(b=>b.onclick=()=>feedbackForm(b.dataset.feedback));
-document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>viewFeedback(b.dataset.view));
-document.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>modal('Cancel this interview?','<p class="muted">Your slot will be released so another student can book it.</p>','Cancel interview',async()=>{await api('status',{id:b.dataset.cancel,status:'Cancelled'});toast('Interview cancelled.')}));
-document.querySelectorAll('[data-status]').forEach(b=>b.onclick=()=>modal('Update interview status.',`<div class="fields"><label>Status<select name="status">${['Confirmed','Completed','No-show','Cancelled'].map(s=>`<option>${s}</option>`).join('')}</select></label></div><p class="hint">Mark an interview Completed to unlock the feedback form.</p>`,'Save status',async d=>{await api('status',{id:b.dataset.status,...d});toast('Interview status updated.')}));
-document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=()=>{let c=state.interviewers.find(c=>c.id===Number(b.dataset.profile));modal('Edit interviewer profile.',`<div class="fields"><label>Expertise<input name="expertise" required maxlength="200" value="${esc(c.expertise)}"></label><label>Biography<textarea name="bio" maxlength="1000">${esc(c.bio)}</textarea></label><label>Location or meeting link<input name="location" maxlength="200" value="${esc(c.location)}"></label></div>`,'Save profile',async d=>{await api('profile',{id:c.id,...d});toast('Profile updated.')});});
-document.querySelectorAll('[data-user]').forEach(b=>b.onclick=async()=>{try{await api('user',{id:b.dataset.user,active:Number(b.dataset.active)});await refresh();toast('Account access updated.')}catch(e){toast(e.message)}});
-const changes={'#search':'search','#date-filter':'date','#from-filter':'from','#until-filter':'until','#status-filter':'status','#round-filter':'round','#interview-search':'appSearch','#schedule-date':'date'};Object.entries(changes).forEach(([s,k])=>{if($(s))$(s).onchange=e=>{filters[k]=e.target.value;render()}});
-if($('#clear-filter'))$('#clear-filter').onclick=()=>{filters={};render()};
-if($('#read'))$('#read').onclick=async()=>{await api('read',{});await refresh()};
-if($('#assign'))$('#assign').onclick=()=>{let next=new Date(state.today+'T12:00:00');next.setDate(next.getDate()+14);let start=next.toISOString().slice(0,10);modal('Publish a working schedule.',`<p class="hint">All interviewers in a shift share fixed working hours. ${state.duration}-minute slots are generated for every day in the selected range. Overlapping assignments are rejected.</p><div class="fields"><label>Interviewer<select name="interviewer">${options(state.interviewers.filter(c=>c.active))}</select></label><label>Schedule<select name="shift"><option value="Morning">Morning · 09:00–13:00</option><option value="Afternoon">Afternoon · 13:00–17:00</option><option value="Evening">Evening · 17:00–20:00</option></select></label><label>From<input type="date" name="from" value="${start}" min="${state.today}" required></label><label>Until<input type="date" name="to" value="${start}" min="${state.today}" required></label></div>`,'Generate slots',async d=>{await api('schedule',d);toast('Schedule assigned and bookable slots published.')});};
-if($('#offline'))$('#offline').onclick=()=>{let slots=state.slots.filter(s=>s.available&&future(s));modal('Register an offline interview.',`<p class="hint">Offline registration uses the same live availability as student bookings.</p><div class="fields"><label>Registered student<select name="student" required>${options(state.users.filter(u=>u.role==='Student'&&u.active))}</select></label><label>Available interview slot<select name="slot" required>${slots.map(s=>`<option value="${s.id}">${esc(state.interviewers.find(c=>c.id===s.interviewer).name)} · ${date(s.date)} · ${time(s.start)}</option>`).join('')}</select></label>${roundSelect()}<label>Role or company<input name="target" maxlength="120"></label><label>Notes<textarea name="notes" maxlength="1000"></textarea></label></div>`,'Register interview',async d=>{await api('book',d);toast('Offline interview confirmed.')});};
-if($('#export'))$('#export').onclick=()=>{const cell=x=>'"'+String(x??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';let rows=[['ID','Student','Interviewer','Date','Start','End','Round','Status','Channel','Target role','Technical','Communication','Problem solving','Overall'],...state.interviews.map(a=>[a.id,a.student_name,a.interviewer_name,a.date,a.start,a.end,a.round,a.status,a.channel,a.target,a.technical,a.communication,a.problem_solving,overall(a)])];let url=URL.createObjectURL(new Blob([rows.map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));let a=document.createElement('a');a.href=url;a.download='mims-interviews.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};}
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let state = null;                 // everything the server says this user may see
+let view = { page: 'Home' };      // current screen; { page: 'Slot', id } for a slot page
+let authTab = 'login';            // 'login' | 'signup'
+let filters = {};
+
+const ROLE_NAMES = { Student: 'Student', Interviewer: 'Interviewer', Coordinator: 'Placement Cell Coordinator', Admin: 'Administrator' };
+const DEMO = { Student: 'student@mims.demo', Interviewer: 'interviewer@mims.demo', Coordinator: 'coordinator@mims.demo', Admin: 'admin@mims.demo' };
+const NAV = { Student: ['Home', 'Find slots', 'My interviews'], Interviewer: ['Home', 'My slots'], Coordinator: ['Home', 'Slots', 'Reports'], Admin: ['Home', 'Users', 'Reports'] };
+const PASSWORD_RULES = [['8 or more characters', p => p.length >= 8], ['An uppercase letter', p => /[A-Z]/.test(p)], ['A lowercase letter', p => /[a-z]/.test(p)], ['A number', p => /\d/.test(p)], ['A special character', p => /[^A-Za-z0-9]/.test(p)]];
+const ICONS = {
+  bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+  info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  check: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
+};
+const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
+
+// ---------- Formatting helpers ----------
+const fmtDate = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const fmtTime = t => { if (!t) return ''; const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
+const timeRange = s => `${fmtTime(s.start)} – ${fmtTime(s.end)}`;
+const options = (list, selected) => list.map(x => `<option ${String(selected) === String(x) ? 'selected' : ''}>${esc(x)}</option>`).join('');
+const badge = (text, tone = 'grey') => `<span class="badge b-${tone}">${esc(text)}</span>`;
+const SLOT_TONE = { Draft: 'grey', Allocated: 'amber', Published: 'green', Completed: 'blue', Cancelled: 'red' };
+const slotBadge = s => badge(s.status === 'Published' && s.date < state.today ? 'Feedback pending' : s.status, s.status === 'Published' && s.date < state.today ? 'amber' : SLOT_TONE[s.status]);
+const note = (text, tone = '') => `<div class="note ${tone}">${icon(tone === 'info' ? 'info' : tone === 'ok' ? 'check' : 'alert')}<div>${text}</div></div>`;
+const empty = text => `<div class="empty">${text}</div>`;
+const card = (title, body, sub = '', action = '') => `<section class="card"><div class="card-head"><div><h2>${title}</h2>${sub ? `<p>${sub}</p>` : ''}</div>${action}</div>${body}</section>`;
+const stats = items => `<div class="stats">${items.map(([label, value]) => `<div class="stat"><span>${label}</span><b>${value}</b></div>`).join('')}</div>`;
+const table = (head, rows, emptyText) => rows.length ? `<div class="table-wrap"><table><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>` : empty(emptyText);
+const pageHead = (title, sub = '', action = '') => `<div class="page-head"><div><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${action ? `<div>${action}</div>` : ''}</div>`;
+const upcoming = s => s.date >= state.today;
+const seatsLeft = s => Math.max(0, s.capacity - s.registered);
+
+// ---------- Server calls ----------
+async function api(path, data) {
+  const res = await fetch('/api/' + path, { method: data ? 'POST' : 'GET', headers: data ? { 'Content-Type': 'application/json' } : {}, body: data ? JSON.stringify(data) : undefined });
+  const body = await res.json();
+  if (!res.ok) {
+    if (res.status === 401 && path === 'state') { showLogin(); return null; }
+    throw Error(body.error || 'Something went wrong.');
+  }
+  return body;
+}
+async function refresh() { try { const s = await api('state'); if (s) { state = s; render(); } } catch (e) { toast(e.message); } }
+function toast(message) { const t = $('#toast'); t.textContent = message; t.style.display = 'block'; clearTimeout(window.toastTimer); window.toastTimer = setTimeout(() => t.style.display = 'none', 4000); }
+
+// ================= Login and Create account =================
+const passwordInput = (name, autocomplete) => `<div class="password"><input type="password" name="${name}" required autocomplete="${autocomplete}"><button type="button" data-toggle-pw>Show</button></div>`;
+const L = (text, required = true) => `<span>${text}${required ? ' <span class="req">*</span>' : ' <span class="opt">(optional)</span>'}</span>`;
+
+function signupFields(role) {
+  if (!role) return `<p class="hint">Choose a user type to see the fields you need to fill in.</p>`;
+  const common = `<div class="grid-3"><label>${L('First name')}<input name="first" required maxlength="50" autocomplete="given-name"></label><label>${L('Middle name', false)}<input name="middle" maxlength="50" autocomplete="additional-name"></label><label>${L('Last name')}<input name="last" required maxlength="50" autocomplete="family-name"></label></div>
+    <div class="grid-2"><label>${L('Email')}<input type="email" name="email" required autocomplete="email"></label><label>${L('Mobile number')}<input name="phone" required inputmode="numeric" maxlength="13" placeholder="10-digit number"></label></div>`;
+  const byRole = {
+    Student: `<div class="form-section">Academic details</div>
+      <div class="grid-2"><label>${L('Roll number')}<input name="roll" required maxlength="20" placeholder="24UCS119"></label><label>${L('Branch')}<select name="branch" required><option value="">Select branch</option>${options(['CSE', 'CCE', 'ECE', 'ME'])}</select></label></div>
+      <div class="grid-2"><label>${L('Batch (graduation year)')}<input type="number" name="batch" required min="2020" max="2040" value="2028"></label><label>${L('CGPA')}<input type="number" name="cgpa" required min="0" max="10" step="0.01" placeholder="8.40"></label></div>`,
+    Interviewer: `<div class="form-section">Professional details</div>
+      <div class="grid-2"><label>${L('Employee / staff ID')}<input name="employee_id" required maxlength="20"></label><label>${L('Designation')}<input name="designation" required maxlength="100" placeholder="Assistant Professor, CSE"></label></div>
+      <div class="grid-2"><label>${L('Domain of expertise')}<select name="domain" required><option value="">Select domain</option>${options(['Software Engineering', 'Data Science', 'Core Electronics', 'HR & Behavioural', 'Consulting & Case'])}</select></label><label>${L('Years of experience')}<input type="number" name="experience" required min="0" max="60"></label></div>`,
+    Coordinator: `<div class="form-section">Staff details</div>
+      <div class="grid-2"><label>${L('Employee ID')}<input name="employee_id" required maxlength="20"></label><label>${L('Department')}<input name="department" required maxlength="100" value="Placement Cell"></label></div>`
+  };
+  const approval = role === 'Student' ? '' : note('Interviewer and coordinator accounts are activated after the administrator approves them.', 'info');
+  return `${common}${byRole[role]}<div class="form-section">Password</div>
+    <div class="grid-2"><label>${L('Password')}${passwordInput('password', 'new-password')}</label><label>${L('Confirm password')}${passwordInput('confirm', 'new-password')}</label></div>
+    <ul class="rules" id="rules">${PASSWORD_RULES.map(([t]) => `<li>${t}</li>`).join('')}</ul>${approval}`;
+}
+
+function showLogin(message = '') {
+  state = null;
+  const userTypes = (list, sel) => `<option value="">Please select</option>${list.map(r => `<option value="${r}" ${r === sel ? 'selected' : ''}>${ROLE_NAMES[r]}</option>`).join('')}`;
+  const body = authTab === 'login'
+    ? `<h1>Log in</h1><p>Choose your user type and enter your details.</p>
+       ${message}
+       <form id="auth" class="form" novalidate>
+         <label>${L('User type')}<select name="role" id="role" required>${userTypes(['Student', 'Interviewer', 'Coordinator', 'Admin'])}</select><span class="hint" id="demo-hint"></span></label>
+         <label>${L('Email')}<input type="email" name="email" required autocomplete="username"></label>
+         <label>${L('Password')}${passwordInput('password', 'current-password')}</label>
+         <div class="error" id="auth-error" role="alert"></div>
+         <button class="full">Log in</button>
+       </form>`
+    : `<h1>Create an account</h1><p>The details we ask for depend on your user type.</p>
+       <form id="auth" class="form" novalidate>
+         <label>${L('User type')}<select name="role" id="role" required>${userTypes(['Student', 'Interviewer', 'Coordinator'], filters.signupRole)}</select><span class="hint">Administrator accounts cannot be created here.</span></label>
+         <div id="role-fields" class="form">${signupFields(filters.signupRole)}</div>
+         <div class="error" id="auth-error" role="alert"></div>
+         <button class="full">Create account</button>
+       </form>`;
+  $('#app').innerHTML = `<div class="auth">
+    <div class="brand"><span class="mark">M</span><span>Mock Interview Management System<small>LNMIIT Jaipur · Placement Cell</small></span></div>
+    <div class="auth-card ${authTab === 'signup' ? 'wide' : ''}">
+      <div class="auth-tabs"><button type="button" data-auth="login" class="${authTab === 'login' ? 'active' : ''}">Log in</button><button type="button" data-auth="signup" class="${authTab === 'signup' ? 'active' : ''}">Create account</button></div>
+      <div class="auth-body">${body}</div>
+    </div>
+    <p class="auth-foot">CS314 Software Development Laboratory · Team T065 · Local prototype</p></div>`;
+  bindAuth();
+}
+
+function bindAuth() {
+  $$('[data-auth]').forEach(b => b.onclick = () => { authTab = b.dataset.auth; showLogin(); });
+  const bindPasswords = () => {
+    $$('[data-toggle-pw]').forEach(b => b.onclick = () => { const i = b.previousElementSibling, show = i.type === 'password'; i.type = show ? 'text' : 'password'; b.textContent = show ? 'Hide' : 'Show'; });
+    const p = $('#auth [name=password]'), rules = $('#rules');
+    if (p && rules) p.oninput = () => [...rules.children].forEach((li, i) => li.classList.toggle('ok', PASSWORD_RULES[i][1](p.value)));
+  };
+  bindPasswords();
+  $('#role').onchange = e => {
+    if (authTab === 'login') { $('#demo-hint').innerHTML = e.target.value ? `Demo account: <b>${DEMO[e.target.value]}</b> · password <b>Demo@123</b>` : ''; return; }
+    filters.signupRole = e.target.value; $('#role-fields').innerHTML = signupFields(e.target.value); bindPasswords();
+  };
+  $('#auth').onsubmit = async e => {
+    e.preventDefault();
+    const form = e.target, err = $('#auth-error'), button = form.querySelector('button.full'), d = Object.fromEntries(new FormData(form));
+    err.textContent = '';
+    const missing = [...form.querySelectorAll('[required]')].find(i => !i.value.trim());
+    if (missing) { missing.focus(); return err.textContent = missing.name === 'role' ? 'Please select a user type.' : 'Please fill in all required fields.'; }
+    if (authTab === 'signup') {
+      if (PASSWORD_RULES.some(([, ok]) => !ok(d.password))) return err.textContent = 'The password does not meet all the rules shown.';
+      if (d.password !== d.confirm) return err.textContent = 'The two passwords do not match.';
+    }
+    button.disabled = true;
+    try {
+      const res = await api(authTab === 'login' ? 'login' : 'signup', d);
+      if (res.pending) { authTab = 'login'; filters = {}; return showLogin(note('Your account was created and is waiting for administrator approval. You will be able to log in once it is approved.', 'ok')); }
+      view = { page: 'Home' }; filters = {}; await refresh();
+    } catch (x) { err.textContent = x.message; } finally { button.disabled = false; }
+  };
+}
+
+// ================= Shell =================
+function go(page, extra = {}) { view = { page, ...extra }; render(); window.scrollTo(0, 0); }
+
+function render() {
+  if (!state) return;
+  const role = state.user.role, unread = state.notifications.filter(n => n.unread).length;
+  $('#app').innerHTML = `<header class="topbar"><div class="topbar-inner">
+      <div class="brand"><span class="mark">M</span><span>MIMS<small>${ROLE_NAMES[role]}</small></span></div>
+      <nav class="tabs-nav">${NAV[role].map(p => `<button data-go="${p}" class="${view.page === p || (view.page === 'Slot' && view.from === p) ? 'active' : ''}">${p}</button>`).join('')}</nav>
+      <div class="top-right">
+        <button class="bell" data-go="Notifications" title="Notifications" aria-label="Notifications">${icon('bell')}${unread ? `<span class="count">${unread}</span>` : ''}</button>
+        <div class="who"><strong>${esc(state.user.name)}</strong><span>${esc(state.user.email)}</span></div>
+        <button class="btn-light btn-sm" id="logout">Log out</button>
+      </div></div></header>
+    <main class="container">${screen()}<footer class="foot"><span>MIMS · Mock Interview Management System</span><span>Team T065 · LNMIIT Jaipur · Local prototype</span></footer></main>`;
+  bind();
+}
+
+function screen() {
+  const role = state.user.role;
+  if (view.page === 'Notifications') return notificationsPage();
+  if (view.page === 'Slot') return slotPage();
+  if (view.page === 'Reports') return reportsPage();
+  return ({ Student: studentPage, Interviewer: interviewerPage, Coordinator: coordinatorPage, Admin: adminPage })[role]();
+}
+
+function notificationsPage() {
+  const n = state.notifications;
+  return pageHead('Notifications', 'Confirmations, reminders, changes and feedback alerts.', n.some(x => x.unread) ? '<button class="btn-light" id="read-all">Mark all as read</button>' : '')
+    + card('All notifications', n.length ? n.map(x => `<div class="notif ${x.unread ? '' : 'read'}"><span class="dot"></span><div><b>${esc(x.type)}</b> · ${esc(x.message)}<small>${esc(x.created)} UTC</small></div></div>`).join('') : empty('You have no notifications.'));
+}
+
+// ================= Student =================
+function studentPage() {
+  const u = state.user, regs = state.registrations;
+  const active = regs.filter(r => r.status === 'Registered' && r.date >= state.today && r.slot_status === 'Published');
+  const scored = regs.filter(r => r.score != null);
+  const avg = scored.length ? (scored.reduce((t, r) => t + r.score, 0) / scored.length).toFixed(1) : '—';
+  if (view.page === 'Home') {
+    const openForMe = state.slots.filter(s => s.open && !s.ineligible && !(s.mine && s.mine.status === 'Registered') && seatsLeft(s));
+    return pageHead(`Welcome, ${esc(u.name.split(' ')[0])}`, `${esc(u.roll)} · ${esc(u.branch)} · Batch ${esc(u.batch)} · CGPA ${esc(u.cgpa)}`, '<button data-go="Find slots">Find a slot</button>')
+      + stats([['Upcoming interviews', active.length], ['Slots you can join', openForMe.length], ['Interviews attended', regs.filter(r => r.attendance === 'Present').length], ['Average score', scored.length ? `${avg} / ${state.score_max}` : '—']])
+      + card('Your upcoming interviews', active.length ? active.map(r => `<div class="list-row"><div><b>${esc(r.domain)}</b> · slot #${r.slot}<small>${fmtDate(r.date)}, ${timeRange(r)} · ${esc(r.mode)} · ${esc(r.venue)}</small></div><button class="btn-light btn-sm" data-slot="${r.slot}">Open</button></div>`).join('') : empty('You have no upcoming interviews. <button class="link" data-go="Find slots">Find a slot</button>'))
+      + card('Latest feedback', scored.length ? scored.slice(0, 3).map(r => `<div class="list-row"><div><b>${esc(r.domain)}</b> · ${fmtDate(r.date)} · ${esc(r.interviewer_name)}<small>${esc(r.comments)}</small></div>${badge(`${r.score} / ${state.score_max}`, 'blue')}</div>`).join('') : empty('Feedback appears here after your interviews.'));
+  }
+  if (view.page === 'Find slots') {
+    const q = (filters.q || '').toLowerCase();
+    const list = state.slots.filter(s => s.status === 'Published' && upcoming(s) && (!filters.domain || s.domain === filters.domain) && (!q || `${s.domain} ${s.interviewer_name} ${s.venue}`.toLowerCase().includes(q)));
+    return pageHead('Find slots', 'Published mock interview slots. Open a slot to see the details and register.')
+      + `<div class="toolbar"><input id="f-q" placeholder="Search domain, interviewer or venue" value="${esc(filters.q || '')}"><select id="f-domain"><option value="">All domains</option>${options(state.domains, filters.domain)}</select></div>`
+      + (list.length ? `<div class="slot-grid">${list.map(slotCard).join('')}</div>` : card('No slots', empty('No published slots match your search.')));
+  }
+  if (view.page === 'My interviews') {
+    return pageHead('My interviews', 'Every slot you registered for, with attendance and feedback.')
+      + stats([['Registered (upcoming)', active.length], ['Attended', regs.filter(r => r.attendance === 'Present').length], ['Feedback received', scored.length], ['Average score', scored.length ? `${avg} / ${state.score_max}` : '—']])
+      + card('Registrations', table(['Slot', 'Date and time', 'Interviewer', 'Status', 'Score', ''], regs.map(r => {
+          const status = r.status === 'Cancelled' ? badge('Cancelled', 'red') : r.attendance === 'Absent' ? badge('Absent', 'red') : r.attendance === 'Present' ? badge('Attended', 'green') : badge('Registered', 'blue');
+          return `<tr><td><b>${esc(r.domain)}</b><small>Slot #${r.slot} · ${esc(r.mode)}</small></td><td>${fmtDate(r.date)}<small>${timeRange(r)}</small></td><td>${esc(r.interviewer_name || '—')}</td><td>${status}</td><td>${r.score != null ? `<b>${r.score} / ${state.score_max}</b>` : r.attendance === 'Present' ? '<small>Awaiting feedback</small>' : '—'}</td>
+            <td><div class="actions">${r.score != null ? `<button class="btn-light btn-sm" data-view-feedback="${r.id}">View feedback</button>` : ''}<button class="btn-light btn-sm" data-slot="${r.slot}">Open slot</button></div></td></tr>`;
+        }), 'You have not registered for any slot yet.'));
+  }
+  return '';
+}
+
+function studentSlotStatus(s) {
+  if (s.mine && s.mine.status === 'Registered') return ['Registered', 'blue'];
+  if (s.status !== 'Published') return [s.status, SLOT_TONE[s.status]];
+  if (s.ineligible) return ['Not eligible', 'grey'];
+  if (!s.open) return ['Registration closed', 'grey'];
+  if (!seatsLeft(s)) return ['Full', 'red'];
+  return ['Open', 'green'];
+}
+
+function slotCard(s) {
+  const [label, tone] = studentSlotStatus(s);
+  return `<article class="slot-card"><header><div><h2>${esc(s.domain)}</h2><small>Slot #${s.id} · ${esc(s.mode)}</small></div>${badge(label, tone)}</header>
+    <dl><div><dt>Date</dt><dd>${fmtDate(s.date)}</dd></div><div><dt>Time</dt><dd>${timeRange(s)}</dd></div><div><dt>Interviewer</dt><dd>${esc(s.interviewer_name)}</dd></div><div><dt>Seats left</dt><dd>${seatsLeft(s)} of ${s.capacity}</dd></div><div><dt>Registration closes</dt><dd>${fmtDate(s.reg_end)}</dd></div></dl>
+    ${s.ineligible ? `<p class="why">${esc(s.ineligible)}</p>` : ''}
+    <footer><button class="${label === 'Open' ? '' : 'btn-light'} full" data-slot="${s.id}">${label === 'Open' ? 'View and register' : 'View details'}</button></footer></article>`;
+}
+
+// ================= Interviewer =================
+function interviewerPage() {
+  const slots = state.slots.filter(s => s.status !== 'Cancelled'), regs = state.registrations;
+  const pending = regs.filter(r => r.attendance === 'Present' && r.score == null);
+  const unmarked = regs.filter(r => !r.attendance && r.date <= state.today);
+  const next = slots.filter(s => upcoming(s) && s.status === 'Published');
+  const row = s => `<tr class="clickable" data-slot="${s.id}"><td><b>${esc(s.domain)}</b><small>Slot #${s.id}</small></td><td>${fmtDate(s.date)}<small>${timeRange(s)}</small></td><td>${esc(s.mode)}<small>${esc(s.venue || '—')}</small></td><td>${s.registered} / ${s.capacity}</td><td>${slotBadge(s)}</td><td><div class="actions"><button class="btn-light btn-sm" data-slot="${s.id}">Open</button></div></td></tr>`;
+  const head = ['Slot', 'Date and time', 'Mode / venue', 'Students', 'Status', ''];
+  if (view.page === 'Home') {
+    return pageHead(`Welcome, ${esc(state.user.name)}`, `${esc(state.user.designation)} · ${esc(state.user.domain)}`)
+      + stats([['Upcoming slots', next.length], ['Attendance to mark', unmarked.length], ['Feedback to give', pending.length], ['Students evaluated', regs.filter(r => r.score != null).length]])
+      + (pending.length || unmarked.length ? note(`You have <b>${unmarked.length}</b> attendance entr${unmarked.length === 1 ? 'y' : 'ies'} and <b>${pending.length}</b> feedback form${pending.length === 1 ? '' : 's'} pending. Open the slot to complete them.`) : '')
+      + card('Slots that need action', table(head, slots.filter(s => s.status === 'Published' && s.date <= state.today).map(row), 'Nothing pending.'))
+      + card('Upcoming slots', table(head, next.map(row), 'No upcoming slots are allocated to you.'));
+  }
+  return pageHead('My slots', 'Slots the placement cell allocated to you. Open a slot to see students, mark attendance and give feedback.')
+    + card('Upcoming', table(head, slots.filter(s => upcoming(s) && s.status !== 'Completed').map(row), 'No upcoming slots.'))
+    + card('Past', table(head, slots.filter(s => !upcoming(s) || s.status === 'Completed').reverse().map(row), 'No past slots.'));
+}
+
+// ================= Coordinator =================
+function coordinatorPage() {
+  const slots = state.slots, regs = state.registrations;
+  const row = s => `<tr class="clickable" data-slot="${s.id}"><td><b>${esc(s.domain)}</b><small>Slot #${s.id}</small></td><td>${fmtDate(s.date)}<small>${timeRange(s)}</small></td><td>${esc(s.interviewer_name || '—')}</td><td>${s.registered} / ${s.capacity}</td><td>${slotBadge(s)}</td><td><div class="actions"><button class="btn-light btn-sm" data-slot="${s.id}">Open</button></div></td></tr>`;
+  const head = ['Slot', 'Date and time', 'Interviewer', 'Registered', 'Status', ''];
+  if (view.page === 'Home') {
+    const todo = slots.filter(s => ['Draft', 'Allocated'].includes(s.status));
+    return pageHead(`Welcome, ${esc(state.user.name)}`, `${esc(state.user.department)} · create slots, allocate interviewers and publish them to students.`, '<button id="new-slot">Create slot</button>')
+      + stats([['Drafts (no interviewer)', slots.filter(s => s.status === 'Draft').length], ['Ready to publish', slots.filter(s => s.status === 'Allocated').length], ['Open for registration', slots.filter(s => s.open).length], ['Students registered', regs.filter(r => r.status === 'Registered').length]])
+      + card('Needs your action', todo.length ? todo.map(s => `<div class="list-row"><div><b>${esc(s.domain)}</b> · slot #${s.id} · ${fmtDate(s.date)}, ${timeRange(s)}<small>${s.status === 'Draft' ? 'Next step: allocate an interviewer.' : `Interviewer ${esc(s.interviewer_name)} allocated. Next step: publish.`}</small></div><button class="btn-sm" data-slot="${s.id}">${s.status === 'Draft' ? 'Allocate' : 'Publish'}</button></div>`).join('') : empty('Nothing waiting. All slots are published.'))
+      + card('Upcoming published slots', table(head, slots.filter(s => s.status === 'Published' && upcoming(s)).map(row), 'No upcoming published slots.'));
+  }
+  const tabs = ['All', 'Draft', 'Allocated', 'Published', 'Completed', 'Cancelled'], f = filters.status || 'All';
+  return pageHead('Slots', 'Every mock interview slot. Open a slot to edit, allocate, publish or cancel it.', '<button id="new-slot">Create slot</button>')
+    + `<div class="toolbar"><div class="segmented">${tabs.map(t => `<button data-status="${t}" class="${f === t ? 'active' : ''}">${t} (${t === 'All' ? slots.length : slots.filter(s => s.status === t).length})</button>`).join('')}</div></div>`
+    + card(`${f} slots`, table(head, slots.filter(s => f === 'All' || s.status === f).map(row), 'No slots in this list.'));
+}
+
+// ================= Administrator =================
+function adminPage() {
+  const users = state.users, pending = users.filter(u => u.status === 'Pending');
+  const details = u => u.role === 'Student' ? `${u.roll} · ${u.branch} · ${u.batch} · CGPA ${u.cgpa}` : u.role === 'Interviewer' ? `${u.designation} · ${u.domain} · ${u.experience} yrs` : u.role === 'Coordinator' ? `${u.employee_id} · ${u.department}` : '';
+  if (view.page === 'Home') {
+    return pageHead('Administration', 'Approve new accounts, manage users and watch system activity.')
+      + stats([['User accounts', users.length], ['Waiting for approval', pending.length], ['Interview slots', state.slots.length], ['Active registrations', state.registrations.filter(r => r.status === 'Registered').length]])
+      + `<div class="split">`
+      + card('Waiting for approval', pending.length ? pending.map(u => `<div class="list-row"><div><b>${esc(u.name)}</b> · ${ROLE_NAMES[u.role]}<small>${esc(u.email)} · ${esc(details(u))}</small></div><div class="actions" style="display:flex;gap:6px"><button class="btn-sm" data-user="${u.id}" data-set="Active">Approve</button><button class="btn-danger btn-sm" data-user="${u.id}" data-set="Inactive">Reject</button></div></div>`).join('') : empty('No accounts are waiting.'), 'Interviewer and coordinator sign-ups.')
+      + card('Recent activity', state.audit.length ? state.audit.map(a => `<div class="list-row"><div>${esc(a.name)} · ${esc(a.action)}<small>${esc(a.created)} UTC</small></div></div>`).join('') : empty('No activity yet.'), 'From the audit log.')
+      + `</div>`;
+  }
+  const f = filters.role || 'All', q = (filters.q || '').toLowerCase();
+  const list = users.filter(u => (f === 'All' || u.role === f) && (!q || `${u.name} ${u.email}`.toLowerCase().includes(q)));
+  return pageHead('Users', 'Approve, deactivate or change the role of an account.')
+    + `<div class="toolbar"><div class="segmented">${['All', ...state.roles].map(r => `<button data-role-tab="${r}" class="${f === r ? 'active' : ''}">${r === 'All' ? 'All' : ROLE_NAMES[r]}</button>`).join('')}</div><input id="f-q" placeholder="Search name or email" value="${esc(filters.q || '')}"></div>`
+    + card(`${list.length} account${list.length === 1 ? '' : 's'}`, table(['Name', 'Details', 'Role', 'Status', ''], list.map(u => {
+        const me = u.id === state.user.id, tone = { Active: 'green', Pending: 'amber', Inactive: 'red' }[u.status];
+        return `<tr><td><b>${esc(u.name)}</b><small>${esc(u.email)} · ${esc(u.phone || '')}</small></td><td><small>${esc(details(u))}</small></td>
+          <td>${me ? ROLE_NAMES[u.role] : `<select data-change-role="${u.id}" style="width:auto;padding:5px 8px">${state.roles.map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${ROLE_NAMES[r]}</option>`).join('')}</select>`}</td>
+          <td>${badge(u.status, tone)}</td>
+          <td><div class="actions">${me ? '<small>You</small>' : u.status === 'Pending' ? `<button class="btn-sm" data-user="${u.id}" data-set="Active">Approve</button><button class="btn-danger btn-sm" data-user="${u.id}" data-set="Inactive">Reject</button>` : u.status === 'Active' ? `<button class="btn-danger btn-sm" data-user="${u.id}" data-set="Inactive">Deactivate</button>` : `<button class="btn-light btn-sm" data-user="${u.id}" data-set="Active">Activate</button>`}</div></td></tr>`;
+      }), 'No users match.'));
+}
+
+// ================= Reports (Coordinator and Administrator) =================
+function reportsPage() {
+  const slots = state.slots.filter(s => s.status !== 'Draft'), regs = state.registrations;
+  const slotRows = slots.map(s => {
+    const r = regs.filter(x => x.slot === s.id && x.status === 'Registered'), scored = r.filter(x => x.score != null);
+    return [`#${s.id}`, s.domain, s.date, s.interviewer_name || '—', s.status, `${r.length} / ${s.capacity}`, r.filter(x => x.attendance === 'Present').length, r.filter(x => x.attendance === 'Absent').length, scored.length ? (scored.reduce((t, x) => t + x.score, 0) / scored.length).toFixed(1) : '—'];
+  });
+  const perfRows = state.performance.map(p => [p.roll, p.name, p.branch, p.batch, p.attended || 0, p.evaluated || 0, p.average ?? '—']);
+  window.reports = { slots: [['Slot', 'Domain', 'Date', 'Interviewer', 'Status', 'Registered', 'Present', 'Absent', 'Average score'], ...slotRows], students: [['Roll number', 'Student', 'Branch', 'Batch', 'Interviews attended', 'Feedback received', 'Average score'], ...perfRows] };
+  const render = rows => rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`);
+  return pageHead('Reports', 'Registration, attendance and performance across all mock interviews.')
+    + stats([['Slots run or scheduled', slots.length], ['Registrations', regs.filter(r => r.status === 'Registered').length], ['Students attended', regs.filter(r => r.attendance === 'Present').length], ['Feedback given', regs.filter(r => r.score != null).length]])
+    + card('Slot summary', table(window.reports.slots[0], render(slotRows), 'No slots yet.'), 'Registrations, attendance and average score per slot (FR-039 to FR-041).', '<button class="btn-light btn-sm" data-export="slots">Export CSV</button>')
+    + card('Student performance', table(window.reports.students[0], render(perfRows), 'No students yet.'), `Average of all feedback scores out of ${state.score_max} (FR-042).`, '<button class="btn-light btn-sm" data-export="students">Export CSV</button>');
+}
+
+// ================= Slot page (all roles) =================
+function lifecycle(s) {
+  if (s.status === 'Cancelled') return `<div class="steps cancelled"><div><i>✕</i> This slot was cancelled</div></div>`;
+  const steps = ['Draft', 'Allocated', 'Published', 'Completed'], at = steps.indexOf(s.status);
+  const labels = { Draft: 'Created (draft)', Allocated: 'Interviewer allocated', Published: 'Published to students', Completed: 'Interview completed' };
+  return `<div class="steps">${steps.map((st, i) => `<div class="${i < at || s.status === 'Completed' ? 'done' : i === at ? 'now' : ''}"><i>${i < at || s.status === 'Completed' ? '✓' : i + 1}</i>${labels[st]}</div>`).join('')}</div>`;
+}
+
+function slotPage() {
+  const s = state.slots.find(x => x.id === view.id);
+  if (!s) return pageHead('Slot not found') + card('Not available', empty('This slot is not available to you.'));
+  const role = state.user.role;
+  const eligibility = [s.branches.length ? s.branches.join(', ') : 'All branches', s.min_cgpa ? `CGPA ${s.min_cgpa} or above` : 'No CGPA limit'].join(' · ');
+  const details = `<dl class="details">
+      <div><dt>Date</dt><dd>${fmtDate(s.date)}</dd></div><div><dt>Time</dt><dd>${timeRange(s)}</dd></div>
+      <div><dt>Mode</dt><dd>${esc(s.mode)}</dd></div><div><dt>${s.mode === 'Online' ? 'Meeting link' : 'Venue'}</dt><dd>${esc(s.venue || 'Not set yet')}</dd></div>
+      <div><dt>Interviewer</dt><dd>${esc(s.interviewer_name || 'Not allocated yet')}</dd></div><div><dt>Seats</dt><dd>${s.registered} registered of ${s.capacity}</dd></div>
+      <div><dt>Registration closes</dt><dd>${fmtDate(s.reg_end)}</dd></div><div><dt>Eligibility</dt><dd>${eligibility}</dd></div>
+      <div class="wide"><dt>Instructions for students</dt><dd>${esc(s.instructions || '—')}</dd></div></dl>`;
+  let actions = '', notice = '';
+  if (role === 'Student') {
+    const mine = s.mine && s.mine.status === 'Registered';
+    if (mine) { notice = note(`You are registered for this slot.${s.open ? ' You can cancel while registration is open.' : ''}`, 'ok'); if (s.open) actions = `<button class="btn-danger" data-cancel-reg="${s.mine.id}">Cancel my registration</button>`; }
+    else if (s.status !== 'Published') notice = note(`This slot is ${s.status.toLowerCase()}.`, 'info');
+    else if (s.ineligible) notice = note(`You cannot register: ${esc(s.ineligible)}`, 'bad');
+    else if (!s.open) notice = note('Registration for this slot is closed.', 'info');
+    else if (!seatsLeft(s)) notice = note('This slot is full.', 'bad');
+    else actions = `<button data-register="${s.id}">Register for this slot</button>`;
+  }
+  if (role === 'Coordinator') {
+    const btn = [];
+    if (['Draft', 'Allocated'].includes(s.status) || (s.status === 'Published' && upcoming(s))) btn.push(`<button class="btn-light" data-edit="${s.id}">Edit</button>`);
+    if (['Draft', 'Allocated'].includes(s.status)) btn.push(`<button class="${s.status === 'Draft' ? '' : 'btn-light'}" data-allocate="${s.id}">${s.status === 'Draft' ? 'Allocate interviewer' : 'Change interviewer'}</button>`);
+    if (s.status === 'Allocated') btn.push(`<button data-publish="${s.id}">Publish</button>`);
+    if (['Draft', 'Allocated'].includes(s.status) || (s.status === 'Published' && upcoming(s))) btn.push(`<button class="btn-danger" data-cancel-slot="${s.id}">Cancel slot</button>`);
+    actions = btn.join(' ');
+    if (s.status === 'Draft') notice = note('Next step: allocate an interviewer. A slot cannot be published without one (BR-002).', 'info');
+    if (s.status === 'Allocated') notice = note(`${esc(s.interviewer_name)} is allocated. Next step: publish the slot so eligible students can register.`, 'info');
+  }
+  const regs = state.registrations.filter(r => r.slot === s.id && (role !== 'Coordinator' || r.status === 'Registered' || s.status === 'Cancelled'));
+  let participants = '';
+  if (role === 'Interviewer' || role === 'Coordinator') {
+    const canMark = role === 'Interviewer' && s.date <= state.today && ['Published', 'Completed'].includes(s.status);
+    if (role === 'Interviewer' && !canMark && upcoming(s) && s.date > state.today) notice = note(`Attendance and feedback open on the interview day (${fmtDate(s.date)}).`, 'info');
+    participants = card(`Students (${regs.filter(r => r.status === 'Registered').length})`, table(['Student', 'Branch', 'CGPA', 'Attendance', 'Feedback', ''], regs.map(r => {
+      const att = r.attendance ? badge(r.attendance, r.attendance === 'Present' ? 'green' : 'red') : r.status === 'Cancelled' ? badge('Cancelled', 'red') : '<small>Not marked</small>';
+      const fb = r.score != null ? `<b>${r.score} / ${state.score_max}</b>` : r.attendance === 'Present' ? badge('Pending', 'amber') : '—';
+      let act = '';
+      if (canMark && r.score == null) act += `<button class="${r.attendance === 'Present' ? '' : 'btn-light'} btn-sm" data-attend="${r.id}" data-value="Present">Present</button><button class="${r.attendance === 'Absent' ? 'btn-danger' : 'btn-light'} btn-sm" data-attend="${r.id}" data-value="Absent">Absent</button>`;
+      if (canMark && r.attendance === 'Present' && r.score == null) act += `<button class="btn-sm" data-feedback="${r.id}">Give feedback</button>`;
+      if (r.score != null) act += `<button class="btn-light btn-sm" data-view-feedback="${r.id}">View feedback</button>`;
+      return `<tr><td><b>${esc(r.student_name)}</b><small>${esc(r.roll)}</small></td><td>${esc(r.branch)}</td><td>${esc(r.cgpa)}</td><td>${att}</td><td>${fb}</td><td><div class="actions">${act}</div></td></tr>`;
+    }), 'No students have registered yet.'), canMark ? 'Mark attendance, then give feedback to every student marked Present.' : '');
+  }
+  const from = view.from || NAV[role][1];
+  return `<button class="link back" data-go="${from}">← Back to ${from}</button>`
+    + pageHead(`${esc(s.domain)} <span class="muted" style="font-weight:500">· Slot #${s.id}</span>`, '', actions)
+    + (role === 'Student' ? '' : lifecycle(s)) + notice
+    + card('Slot details', details, '', role === 'Student' ? badge(...studentSlotStatus(s)) : slotBadge(s)) + participants;
+}
+
+// ================= Modals =================
+function modal(title, body, submitLabel, onSubmit, danger = false) {
+  const d = $('#modal');
+  d.innerHTML = `<form id="modal-form" novalidate><div class="modal-head"><h2>${title}</h2><button type="button" data-close aria-label="Close">×</button></div>
+    <div class="modal-body">${body}<div class="error" id="modal-error" role="alert" style="margin-top:12px"></div></div>
+    <div class="modal-foot"><button type="button" class="btn-light" data-close>${submitLabel ? 'Cancel' : 'Close'}</button>${submitLabel ? `<button id="modal-submit" class="${danger ? 'btn-danger' : ''}">${submitLabel}</button>` : ''}</div></form>`;
+  $$('[data-close]').forEach(b => b.onclick = () => d.close());
+  $('#modal-form').onsubmit = async e => {
+    e.preventDefault(); if (!onSubmit) return;
+    $('#modal-error').textContent = '';
+    const form = e.target, missing = [...form.querySelectorAll('[required]')].find(i => !i.value.trim());
+    if (missing) { missing.focus(); return $('#modal-error').textContent = 'Please fill in all required fields.'; }
+    const b = $('#modal-submit'); b.disabled = true;
+    try { const fd = new FormData(form); await onSubmit(Object.fromEntries(fd), fd); d.close(); await refresh(); }
+    catch (x) { $('#modal-error').textContent = x.message; } finally { b.disabled = false; }
+  };
+  if (!d.open) d.showModal();
+}
+
+function slotForm(s) {
+  const v = k => s ? esc(s[k] ?? '') : '';
+  const locked = s && s.status === 'Published' ? 'disabled' : '';
+  return `<div class="form">${locked ? note('This slot is published. Only the venue, seats, closing date and instructions can be changed. Registered students will be notified.', 'info') : ''}
+    <div class="grid-3"><label>${L('Date')}<input type="date" name="date" required min="${state.today}" value="${v('date')}" ${locked}></label><label>${L('Start time')}<input type="time" name="start" required value="${v('start')}" ${locked}></label><label>${L('End time')}<input type="time" name="end" required value="${v('end')}" ${locked}></label></div>
+    <div class="grid-2"><label>${L('Domain')}<select name="domain" required ${locked}><option value="">Select domain</option>${options(state.domains, s?.domain)}</select></label><label>${L('Mode')}<select name="mode" ${locked}>${options(state.modes, s?.mode || 'Online')}</select></label></div>
+    <label>${L('Venue or meeting link', false)}<input name="venue" maxlength="200" value="${v('venue')}" placeholder="Needed before publishing"></label>
+    <div class="grid-2"><label>${L('Seats')}<input type="number" name="capacity" required min="1" max="200" value="${s ? s.capacity : 5}"></label><label>${L('Registration closes on', false)}<input type="date" name="reg_end" min="${state.today}" value="${v('reg_end')}"></label></div>
+    <div class="form-section">Eligibility</div>
+    <label><span>Branches <span class="opt">(leave all unticked to allow every branch)</span></span><div class="checks">${state.branches.map(b => `<label><input type="checkbox" name="branches" value="${b}" ${s && s.branches.includes(b) ? 'checked' : ''} ${locked}>${b}</label>`).join('')}</div></label>
+    <label>${L('Minimum CGPA', false)}<input type="number" name="min_cgpa" min="0" max="10" step="0.1" value="${s ? s.min_cgpa : 0}" ${locked} style="max-width:160px"></label>
+    <label>${L('Instructions for students', false)}<textarea name="instructions" maxlength="1000">${v('instructions')}</textarea></label></div>`;
+}
+
+function createSlot() {
+  modal('Create slot', `<p class="muted" style="margin-bottom:14px">The slot is saved as a draft. Next you allocate an interviewer and publish it.</p>${slotForm(null)}`, 'Save draft', async (d, fd) => {
+    const res = await api('slot', { ...d, branches: fd.getAll('branches') }); toast('Draft slot created.'); view = { page: 'Slot', id: res.id, from: 'Slots' };
+  });
+}
+function editSlot(s) {
+  modal(`Edit slot #${s.id}`, slotForm(s), 'Save changes', async (d, fd) => { await api('slot_update', { ...d, id: s.id, branches: fd.getAll('branches') }); toast('Slot updated.'); });
+}
+function allocate(s) {
+  const c = s.candidates || [];
+  modal(`Allocate interviewer · slot #${s.id}`, `<p class="muted">${esc(s.domain)} · ${fmtDate(s.date)}, ${timeRange(s)}</p><div style="margin-top:14px">${c.length
+    ? `${note(`${c.length} interviewer${c.length > 1 ? 's are' : ' is'} available: same domain and free at this time.`, 'ok')}<label>${L('Interviewer')}<select name="interviewer" required>${c.map(i => `<option value="${i.id}" ${i.id === s.interviewer ? 'selected' : ''}>${esc(i.name)} · ${esc(i.designation)}</option>`).join('')}</select></label><p class="hint" style="margin-top:10px">The interviewer is notified as soon as you allocate.</p>`
+    : note(`No ${esc(s.domain)} interviewer is free at this time. Change the slot time, or ask the administrator to approve another interviewer.`, 'bad')}</div>`,
+    c.length ? 'Allocate' : '', async d => { await api('allocate', { id: s.id, ...d }); toast('Interviewer allocated. You can publish the slot now.'); });
+}
+function feedbackForm(r) {
+  modal('Give feedback', `<dl class="details" style="border:1px solid var(--border);border-radius:8px;margin-bottom:16px"><div><dt>Student</dt><dd>${esc(r.student_name)} · ${esc(r.roll)}</dd></div><div><dt>Slot</dt><dd>#${r.slot} · ${esc(r.domain)}</dd></div></dl>
+    <div class="form"><label>${L(`Score (${state.score_min} to ${state.score_max})`)}<select name="score" required><option value="">Select score</option>${Array.from({ length: state.score_max - state.score_min + 1 }, (_, i) => `<option>${state.score_min + i}</option>`).join('')}</select></label>
+    <label>${L('Comments')}<textarea name="comments" required maxlength="1000" placeholder="What went well, and what the student should improve."></textarea></label>
+    <p class="hint">Feedback can be submitted once. The student is notified and their performance record is updated.</p></div>`,
+    'Submit feedback', async d => { await api('feedback', { id: r.id, ...d }); toast('Feedback submitted.'); });
+}
+function viewFeedback(r) {
+  modal('Feedback', `<dl class="details" style="border:1px solid var(--border);border-radius:8px"><div><dt>Slot</dt><dd>#${r.slot} · ${esc(r.domain)}</dd></div><div><dt>Date</dt><dd>${fmtDate(r.date)}</dd></div><div><dt>Interviewer</dt><dd>${esc(r.interviewer_name)}</dd></div><div><dt>Student</dt><dd>${esc(r.student_name)}</dd></div><div class="wide"><dt>Score</dt><dd style="font-size:22px">${r.score} / ${state.score_max}</dd></div><div class="wide"><dt>Comments</dt><dd>${esc(r.comments)}</dd></div></dl>`, '', null);
+}
+const confirmAction = (title, text, label, fn) => modal(title, `<p>${text}</p>`, label, fn, true);
+
+// ================= Events =================
+function bind() {
+  const on = (sel, fn) => $$(sel).forEach(el => el.onclick = e => { e.stopPropagation(); fn(el); });
+  const slotById = id => state.slots.find(s => s.id === Number(id));
+  const regById = id => state.registrations.find(r => r.id === Number(id));
+  on('[data-go]', b => go(b.dataset.go));
+  on('[data-slot]', b => go('Slot', { id: Number(b.dataset.slot), from: view.page === 'Slot' ? view.from : view.page }));
+  $('#logout').onclick = async () => { await api('logout', {}); authTab = 'login'; showLogin(); };
+  on('#read-all', async () => { await api('read', {}); await refresh(); });
+  on('#new-slot', createSlot);
+  on('[data-edit]', b => editSlot(slotById(b.dataset.edit)));
+  on('[data-allocate]', b => allocate(slotById(b.dataset.allocate)));
+  on('[data-publish]', b => modal('Publish slot', `<p>Eligible students will see slot #${b.dataset.publish} and can register until the closing date.</p>`, 'Publish', async () => { await api('publish', { id: Number(b.dataset.publish) }); toast('Slot published.'); }));
+  on('[data-cancel-slot]', b => confirmAction('Cancel slot', 'All registered students and the interviewer will be notified, and every registration will be cancelled. This cannot be undone.', 'Cancel slot', async () => { await api('cancel_slot', { id: Number(b.dataset.cancelSlot) }); toast('Slot cancelled.'); }));
+  on('[data-register]', b => { const s = slotById(b.dataset.register); modal('Confirm registration', `<p>Register for <b>${esc(s.domain)}</b> on <b>${fmtDate(s.date)}, ${timeRange(s)}</b> with ${esc(s.interviewer_name)}?</p><p class="muted" style="margin-top:8px">${esc(s.instructions || '')}</p>`, 'Register', async () => { await api('register_slot', { slot: s.id }); toast('You are registered. A confirmation is in your notifications.'); }); });
+  on('[data-cancel-reg]', b => confirmAction('Cancel registration', 'Your seat will be released for other students.', 'Cancel registration', async () => { await api('cancel_registration', { id: Number(b.dataset.cancelReg) }); toast('Registration cancelled.'); }));
+  on('[data-attend]', async b => { try { await api('attendance', { id: Number(b.dataset.attend), status: b.dataset.value }); await refresh(); toast(`Marked ${b.dataset.value.toLowerCase()}.`); } catch (e) { toast(e.message); } });
+  on('[data-feedback]', b => feedbackForm(regById(b.dataset.feedback)));
+  on('[data-view-feedback]', b => viewFeedback(regById(b.dataset.viewFeedback)));
+  on('[data-status]', b => { filters.status = b.dataset.status; render(); });
+  on('[data-role-tab]', b => { filters.role = b.dataset.roleTab; render(); });
+  on('[data-user]', async b => { try { await api('user', { id: Number(b.dataset.user), status: b.dataset.set }); await refresh(); toast('Account updated.'); } catch (e) { toast(e.message); } });
+  $$('[data-change-role]').forEach(sel => sel.onchange = async () => { try { await api('user', { id: Number(sel.dataset.changeRole), role: sel.value }); await refresh(); toast('Role changed.'); } catch (e) { toast(e.message); render(); } });
+  on('[data-export]', b => {
+    const rows = window.reports[b.dataset.export], cell = x => '"' + String(x ?? '').replace(/^[=+@-]/, "'$&").replace(/"/g, '""') + '"';
+    const url = URL.createObjectURL(new Blob([rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv' }));
+    const a = document.createElement('a'); a.href = url; a.download = `mims-${b.dataset.export}-report.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  if ($('#f-q')) $('#f-q').oninput = e => { filters.q = e.target.value; const pos = e.target.selectionStart; render(); const i = $('#f-q'); i.focus(); i.setSelectionRange(pos, pos); };
+  if ($('#f-domain')) $('#f-domain').onchange = e => { filters.domain = e.target.value; render(); };
+}
+
 refresh();

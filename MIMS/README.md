@@ -1,68 +1,76 @@
 # MIMS — Mock Interview Management System
 
-Working local prototype of a mock interview management system for placement preparation. Students book practice interviews with interviewers, interviewers record structured feedback, and the placement cell manages schedules and reports.
+Working local prototype for **Team T065** (CS314 Software Development Laboratory, LNMIIT Jaipur), built from Lab Assignments 1–7. Students register for mock interview slots, the placement cell schedules slots and allocates interviewers, interviewers mark attendance and give feedback, and the administrator manages accounts.
 
 ## Start
 
-Requires Python 3.10 or later; no packages, API keys, or database services are required.
+Requires Python 3.10 or later. No packages, API keys or database server are needed.
 
 ```bash
 cd MIMS
 python3 server.py
 ```
 
-On Windows use `python server.py` or double-click `start.cmd`. Open http://127.0.0.1:8765 in your browser.
+On Windows run `python server.py` or double-click `start.cmd`. Open http://127.0.0.1:8765.
 
-All seeded accounts use **Demo@123**:
+To reset the demo data, stop the server, delete `mims.sqlite3` and start it again.
 
-| Role | Email |
-|---|---|
-| Student | student@mims.demo |
-| Administrator (Placement Cell) | admin@mims.demo |
-| Interviewer (Rohan · Technical) | interviewer@mims.demo |
-| Interviewer (Ananya · HR) | ananya@mims.demo |
-| Interviewer (Vikram · Case) | vikram@mims.demo |
-| Management | management@mims.demo |
+## Users
 
-The sign-in page has shortcuts to enter each main demo role. New registration always creates a student, regardless of submitted role fields.
+Choose the **User type** on the login form, then enter the email and password. Every demo account uses the password **Demo@123**.
 
-## Demonstration
+| User type | Email | What they do |
+|---|---|---|
+| Student | student@mims.demo | Find slots, register, cancel, see attendance and feedback |
+| Student (not eligible for CSE-only slots) | arnav@mims.demo | Shows the eligibility check |
+| Interviewer | interviewer@mims.demo, vikram@mims.demo, meera@mims.demo | See allocated slots, mark attendance, give feedback |
+| Placement Cell Coordinator | coordinator@mims.demo | Create, edit, allocate, publish and cancel slots; reports |
+| Administrator | admin@mims.demo | Approve sign-ups, activate/deactivate accounts, change roles; reports |
 
-1. Sign in as Student. Find an interviewer, filter by date and time, choose a round (Technical, HR, Behavioural, Case study), add the role you are preparing for, and book a slot. See the confirmation in My interviews and Notifications.
-2. Reschedule the interview. The previous slot becomes available again. Cancel a booking to release its slot.
-3. Open Feedback. One completed HR round is seeded with scores and comments so the feedback view is visible on first start.
-4. Sign out and use Admin. Register an offline interview for an existing active student. It occupies the same slot inventory as online bookings.
-5. Under Schedules, assign an interviewer a date range **after the initial 14-day seeded range**. Morning is 09:00–13:00, afternoon 13:00–17:00, evening 17:00–20:00. Slots last 45 minutes and never spill past the end of a shift. All days, including weekends, are enabled in this prototype. Overlapping date assignments are rejected.
-6. Edit interviewer expertise, biographies and locations under Interviewers; disable or enable accounts under Users.
-7. Use the Interviewer account to view its schedule and mark its own sessions Completed or No-show. Marking an interview Completed unlocks **Give feedback**: three scores from 1 to 5 (technical knowledge, communication, problem solving) plus what went well and what to work on. Feedback can be edited later; the student is notified each time.
-8. Sign back in as Student to see the new feedback under Feedback and the overall score in My interviews.
-9. Use Management for read-only reports: outcomes, rounds, slot utilization, average scores and feedback coverage; export the interview CSV. Admin Reports also contains the audit trail.
+**Create account** asks for different details for each user type:
 
-## Implementation and requirement coverage
+- **Student:** name, email, mobile, roll number, branch, batch, CGPA. The account is active straight away.
+- **Interviewer:** name, email, mobile, employee ID, designation, domain of expertise, years of experience. The account waits for administrator approval.
+- **Placement Cell Coordinator:** name, email, mobile, employee ID, department. The account waits for administrator approval.
+- Administrator accounts cannot be self-registered.
 
-- Authentication and authorization: salted PBKDF2 passwords, server-side sessions with 12-hour expiry, HttpOnly SameSite cookies; backend role checks on every mutation.
-- Users and profiles: student registration, admin account activation/deactivation, interviewer profile editing. Adding staff accounts and changing roles currently require a code/database migration.
-- Schedules: predefined shifts, date-range assignments, overlap validation, automatic 45-minute slot generation.
-- Discovery: interviewer profiles with expertise, date/time-range filtering, available future slots.
-- Booking: online and offline registration, interview round and target role captured at booking, shared SQLite data, database uniqueness constraint, student overlap validation, immediate confirmation.
-- Interview lifecycle: scoped interview lists, atomic rescheduling to the same interviewer, cancellation, completion and no-show statuses. Bookings confirm immediately; Pending is supported as a stored status but not created by the UI.
-- Feedback: one feedback record per completed interview, three 1–5 scores with written strengths and improvements, editable by the interviewer or admin, visible to the student, interviewer, admin and management.
-- In-app notifications for students and interviewers, including a notification when feedback is recorded; marking as read.
-- Dashboards, status and round counts, slot utilization, average scores, feedback coverage, CSV export, management read-only view.
-- Audit records for profile, user, schedule, interview and feedback mutations.
+Passwords need 8+ characters with an uppercase letter, a lowercase letter, a number and a special character. The rules tick off as you type, and both password fields have Show/Hide.
 
-`server.py` implements the HTTP application, authorization, domain operations, and SQLite persistence. The static frontend is plain HTML/CSS/JavaScript. Data lives in `mims.sqlite3`, created and seeded on first start. Slot availability is derived from interview records, preventing contradictory availability flags. SQL `BEGIN IMMEDIATE` transactions serialize competing writes; a unique index prevents multiple non-cancelled interviews per slot, and a unique constraint keeps one feedback record per interview. Rescheduling failure rolls back the transaction and preserves the old slot. Completed and no-show interviews retain their slots for historical accuracy.
+## Demo walkthrough
 
-## Validation
+The seed data includes a completed slot (#1), a past slot with one feedback still pending (#2), three published slots (#3–#5), a draft with no interviewer (#6), a cancelled slot (#7) and one interviewer sign-up waiting for approval (Ms. Kavya Rao).
+
+1. **Allocate an interviewer (UC-004).** Log in as Coordinator → Slots → open slot #6 → *Allocate interviewer*. Only interviewers with the same domain who are free at that time are offered. Allocate, then *Publish*. The progress bar on the slot moves from Draft to Published, and the interviewer is notified.
+2. **Register for a slot (UC-009).** Log in as Student → Find slots → open a slot → *Register for this slot*. The system checks, in order, that the slot is published, registration is open, you are eligible, you are not already registered and seats are left. Cancel from the same page while registration is open. Log in as arnav@mims.demo to see the *Not eligible* message.
+3. **Attendance and feedback (UC-012, UC-013).** Log in as vikram@mims.demo → My slots → open slot #2. Aanya is marked Present and needs feedback. *Give feedback* takes a score from 1 to 10 and a comment. Once every present student has feedback, the slot becomes Completed and the student sees the score under My interviews.
+4. **Approve an account (UC-002).** Log in as Administrator. Kavya Rao is under *Waiting for approval*. Approve her, and she can log in and be allocated to Software Engineering slots. The Users page also deactivates accounts and changes roles.
+5. **Reports (UC-016).** Coordinator and Administrator → Reports: a slot summary (registrations, attendance, average score) and student performance, both exportable as CSV.
+6. **Notifications (UC-015).** The bell in the top bar shows confirmations, allocation notices, slot changes, cancellations, feedback alerts and reminders for interviews today or tomorrow.
+
+## How the requirements are covered
+
+- **Business rules:** only coordinators create slots (BR-001). A slot needs an interviewer before publishing (BR-002). Only published, open slots accept registrations (BR-003, BR-004). No duplicate registration (BR-005) and no overbooking, even with simultaneous requests (BR-006). Only the allocated interviewer marks attendance and gives feedback (BR-007). Scores must be 1–10 (BR-008). Feedback only for students marked Present (BR-009). Reports only for coordinator and administrator (BR-010). Cancelled slots accept no registrations (BR-011). Every login attempt, successful or failed, and every logout is written to the audit log with the user (or the unknown email), the reason and the time; passwords are never logged (BR-012, added for authentication auditability).
+- **Slot lifecycle:** Draft → Allocated → Published → Completed, or Cancelled.
+- **Errors** use the outcome codes from the interface design, for example `NOT_ELIGIBLE`, `SLOT_FULL`, `INTERVIEWER_UNAVAILABLE`, `ATTENDANCE_REQUIRED`, `SCORE_OUT_OF_RANGE` and `FEEDBACK_EXISTS`.
+- **Security:** salted PBKDF2 password hashes, HttpOnly session cookies, role checks on every server action, and every important action written to the audit log.
+
+## Files
+
+- `server.py` — HTTP server, business rules and SQLite storage (standard library only).
+- `static/index.html`, `static/app.js`, `static/style.css` — the web interface (plain HTML, CSS and JavaScript).
+- `test_system.py` — integration tests.
+- `start.cmd` — Windows launcher.
+
+To keep the prototype small, attendance, score and comments are stored on the registration record, and a student's performance record (attended, evaluated, average) is calculated from those rows.
+
+## Tests
 
 ```bash
 python3 -m unittest test_system.py -v
 ```
 
-Tests use a temporary database and real HTTP requests. They exercise booking, round validation, cancellation, rescheduling rollback, the feedback flow (only after completion, only by the right interviewer, editable, visible to the student), simultaneous online/offline booking, schedule overlap rejection, slot boundaries, role access, student-only registration, session logout and notifications.
+The tests run against a real HTTP server with a temporary database. They cover sign-up for each user type and approval, interviewer allocation and publishing, registration including concurrent requests, attendance and feedback, slot completion, and what each role is allowed to see.
 
 ## Prototype limits
 
-This runs on localhost for demonstrations. Email delivery is not connected; notifications are in-app. Video links are stored as plain text in the interviewer location field; no meeting integration exists. Updates appear after actions or Refresh rather than server push. The UI loads fonts from Google Fonts when online, with system font fallbacks. There is no password reset, login throttling, account invitation, resume upload, configurable working-day calendar, or production HTTPS deployment. The code is a compact prototype rather than a fully separated service/repository architecture. Do not use real student records for this demo.
-
-To choose a different port set `PORT` before starting. To use a different database set `MIMS_DB`. Stop the server before moving or replacing the database. Keep the database to preserve changes between runs.
+Runs on localhost only. Notifications are in-app; no email or SMS is sent. There is no password reset, waitlist, calendar sync or video calling, in line with the out-of-scope list in Assignment 1. Do not use real student data.
