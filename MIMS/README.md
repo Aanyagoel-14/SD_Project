@@ -36,6 +36,31 @@ Choose the **User type** on the login form, then enter the email and password. E
 
 Passwords need 8+ characters with an uppercase letter, a lowercase letter, a number and a special character. The rules tick off as you type, and both password fields have Show/Hide.
 
+## Two-step verification
+
+After the correct user type, email and password, the system sends a **6-digit one-time code** to the user's email and mobile number. The user must enter it to finish logging in. The code works once, expires in 5 minutes, allows 5 wrong tries, and can be resent after 30 seconds (3 codes per login). Codes are stored hashed, never in plain text, and never written to the audit log.
+
+**Demo mode (default, no setup).** Demo accounts end in `@mims.demo`, which is not a real mailbox, so the email and the SMS are printed in the terminal where `server.py` runs:
+
+```
+[MIMS EMAIL simulator] To student@mims.demo: Your MIMS login code is 511723. ...
+[MIMS SMS simulator] To 9876500119: Your MIMS login code is 511723. ...
+```
+
+**Real email (free, Gmail).** Turn on 2-Step Verification on a Gmail account, create an *App password* in the Google account's security settings, then start the server with:
+
+```bash
+export MIMS_SMTP_HOST=smtp.gmail.com MIMS_SMTP_PORT=587
+export MIMS_SMTP_USER=yourname@gmail.com MIMS_SMTP_PASSWORD='the 16-letter app password'
+python3 server.py
+```
+
+Accounts created with a real email address then receive the code by email. Any SMTP server works; `MIMS_SMTP_SECURITY` can be `starttls` (default), `ssl` or `none`.
+
+**Real SMS (paid, India).** SMS in India must go through a registered gateway under TRAI's DLT rules. The prototype can send through Fast2SMS's Quick SMS route by setting `MIMS_FAST2SMS_KEY` to the API key from the Fast2SMS dashboard. Each SMS is charged to that account. Without a key, SMS stays in demo mode.
+
+To switch the second step off, for example for a quick demo, start the server with `MIMS_2FA=off`.
+
 ## Demo walkthrough
 
 The seed data includes a completed slot (#1), a past slot with one feedback still pending (#2), three published slots (#3–#5), a draft with no interviewer (#6), a cancelled slot (#7) and one interviewer sign-up waiting for approval (Ms. Kavya Rao).
@@ -52,7 +77,7 @@ The seed data includes a completed slot (#1), a past slot with one feedback stil
 - **Business rules:** only coordinators create slots (BR-001). A slot needs an interviewer before publishing (BR-002). Only published, open slots accept registrations (BR-003, BR-004). No duplicate registration (BR-005) and no overbooking, even with simultaneous requests (BR-006). Only the allocated interviewer marks attendance and gives feedback (BR-007). Scores must be 1–10 (BR-008). Feedback only for students marked Present (BR-009). Reports only for coordinator and administrator (BR-010). Cancelled slots accept no registrations (BR-011). Every login attempt, successful or failed, and every logout is written to the audit log with the user (or the unknown email), the reason and the time; passwords are never logged (BR-012, added for authentication auditability).
 - **Slot lifecycle:** Draft → Allocated → Published → Completed, or Cancelled.
 - **Errors** use the outcome codes from the interface design, for example `NOT_ELIGIBLE`, `SLOT_FULL`, `INTERVIEWER_UNAVAILABLE`, `ATTENDANCE_REQUIRED`, `SCORE_OUT_OF_RANGE` and `FEEDBACK_EXISTS`.
-- **Security:** salted PBKDF2 password hashes, HttpOnly session cookies, role checks on every server action, and every important action written to the audit log.
+- **Security:** two-step verification with a one-time code by email and SMS, salted PBKDF2 password hashes, HttpOnly session cookies, role checks on every server action, and every important action written to the audit log.
 
 ## Files
 
@@ -69,7 +94,7 @@ To keep the prototype small, attendance, score and comments are stored on the re
 python3 -m unittest test_system.py -v
 ```
 
-The tests run against a real HTTP server with a temporary database. They cover sign-up for each user type and approval, interviewer allocation and publishing, registration including concurrent requests, attendance and feedback, slot completion, and what each role is allowed to see.
+The tests run against a real HTTP server with a temporary database. They cover two-step login (wrong code, single use, expiry, lock-out after five tries, resend gap), real SMTP email delivery to a local test mail server, the SMS request format, sign-up for each user type and approval, interviewer allocation and publishing, registration including concurrent requests, attendance and feedback, slot completion, and what each role is allowed to see.
 
 ## Prototype limits
 

@@ -45,7 +45,7 @@ async function api(path, data) {
   const body = await res.json();
   if (!res.ok) {
     if (res.status === 401 && path === 'state') { showLogin(); return null; }
-    throw Error(body.error || 'Something went wrong.');
+    throw Object.assign(Error(body.error || 'Something went wrong.'), { code: body.code });
   }
   return body;
 }
@@ -132,8 +132,57 @@ function bindAuth() {
     try {
       const res = await api(authTab === 'login' ? 'login' : 'signup', d);
       if (res.pending) { authTab = 'login'; filters = {}; return showLogin(note('Your account was created and is waiting for administrator approval. You will be able to log in once it is approved.', 'ok')); }
+      if (res.otp_required) return showOtp(res);
       view = { page: 'Home' }; filters = {}; await refresh();
     } catch (x) { err.textContent = x.message; } finally { button.disabled = false; }
+  };
+}
+
+// ---------- Step 2: one-time code sent by email and SMS ----------
+function showOtp(res, message = '') {
+  clearInterval(window.otpTimer);
+  const expiresAt = Date.now() + res.expires_in * 1000, resendAt = Date.now() + res.resend_in * 1000;
+  const status = { sent: 'sent', simulated: 'demo mode: shown in the server terminal', failed: 'could not be sent: shown in the server terminal' };
+  $('#app').innerHTML = `<div class="auth">
+    <div class="brand"><span class="mark">M</span><span>Mock Interview Management System<small>LNMIIT Jaipur · Placement Cell</small></span></div>
+    <div class="auth-card"><div class="auth-body">
+      <h1>Two-step verification</h1><p>Enter the 6-digit code we sent you. It works once and expires in 5 minutes.</p>
+      <ul class="sent-to"><li><span>Email</span><b>${esc(res.email)}</b><small>${status[res.delivery.email]}</small></li><li><span>SMS</span><b>${esc(res.phone)}</b><small>${status[res.delivery.sms]}</small></li></ul>
+      ${message}
+      <form id="otp-form" class="form" novalidate>
+        <label>${L('One-time code')}<input id="otp-code" class="otp-input" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" required></label>
+        <p class="hint" id="otp-timer"></p>
+        <div class="error" id="otp-error" role="alert"></div>
+        <button class="full">Verify and log in</button>
+      </form>
+      <div class="otp-links"><button type="button" class="link" id="otp-back">← Back to log in</button><button type="button" class="link" id="otp-resend" disabled>Resend code</button></div>
+    </div></div>
+    <p class="auth-foot">CS314 Software Development Laboratory · Team T065 · Local prototype</p></div>`;
+  const input = $('#otp-code'), back = msg => { clearInterval(window.otpTimer); authTab = 'login'; showLogin(msg); };
+  input.focus();
+  input.oninput = () => { input.value = input.value.replace(/\D/g, '').slice(0, 6); };
+  const tick = () => {
+    if (!$('#otp-timer')) return clearInterval(window.otpTimer);
+    const left = Math.max(0, Math.round((expiresAt - Date.now()) / 1000)), wait = Math.max(0, Math.ceil((resendAt - Date.now()) / 1000));
+    $('#otp-timer').textContent = left ? `Code expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'The code has expired. Request a new one.';
+    $('#otp-resend').disabled = wait > 0;
+    $('#otp-resend').textContent = wait > 0 ? `Resend code in ${wait} s` : 'Resend code';
+  };
+  tick(); window.otpTimer = setInterval(tick, 1000);
+  $('#otp-back').onclick = () => back();
+  $('#otp-resend').onclick = async () => {
+    try { showOtp(await api('resend_otp', { challenge: res.challenge }), note('A new code was sent. Earlier codes no longer work.', 'ok')); }
+    catch (x) { if (['OTP_EXPIRED', 'OTP_LIMIT'].includes(x.code)) back(note(x.message, 'bad')); else $('#otp-error').textContent = x.message; }
+  };
+  $('#otp-form').onsubmit = async e => {
+    e.preventDefault();
+    const err = $('#otp-error'), button = e.target.querySelector('button.full');
+    err.textContent = '';
+    if (!/^\d{6}$/.test(input.value)) { input.focus(); return err.textContent = 'Enter the 6-digit code.'; }
+    button.disabled = true;
+    try { await api('verify_otp', { challenge: res.challenge, code: input.value }); clearInterval(window.otpTimer); view = { page: 'Home' }; filters = {}; await refresh(); }
+    catch (x) { if (['OTP_EXPIRED', 'OTP_LOCKED', 'ACCOUNT_INACTIVE'].includes(x.code)) back(note(x.message, 'bad')); else { err.textContent = x.message; input.select(); } }
+    finally { button.disabled = false; }
   };
 }
 

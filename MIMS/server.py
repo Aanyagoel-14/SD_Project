@@ -9,8 +9,12 @@ import json
 import os
 import re
 import secrets
+import smtplib
 import sqlite3
+import ssl
+import urllib.request
 from contextlib import contextmanager
+from email.message import EmailMessage
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +31,58 @@ MODES = ('Online', 'Offline')
 SCORE_MIN, SCORE_MAX = 1, 10
 PASSWORD = re.compile(r'^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,128}$', re.S)
 EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+# ---------- Two-step verification (one-time code by email and SMS) ----------
+# On by default. Set MIMS_2FA=off to log in with the password only.
+TWO_FACTOR = os.environ.get('MIMS_2FA', 'on').lower() != 'off'
+OTP_TTL_MIN, OTP_MAX_ATTEMPTS, OTP_RESEND_SECONDS, OTP_MAX_SENDS = 5, 5, 30, 3
+
+def utcnow(): return dt.datetime.now(dt.timezone.utc)
+def mask_email(e): name, _, domain = e.partition('@'); return f'{name[:1]}***@{domain}'
+def mask_phone(p): return f'******{p[-4:]}' if p and len(p) >= 4 else 'no number on file'
+
+def send_email(to, subject, body):
+    """Send through the SMTP server in MIMS_SMTP_* (e.g. Gmail with an app password).
+    Returns 'sent', 'failed', or 'simulated' when no server is configured or the address is a demo account."""
+    host = os.environ.get('MIMS_SMTP_HOST')
+    if not host or to.endswith('@mims.demo'): return 'simulated'
+    msg = EmailMessage()
+    msg['From'] = os.environ.get('MIMS_SMTP_FROM') or os.environ.get('MIMS_SMTP_USER', 'mims@localhost')
+    msg['To'], msg['Subject'] = to, subject
+    msg.set_content(body)
+    port, security = int(os.environ.get('MIMS_SMTP_PORT', '587')), os.environ.get('MIMS_SMTP_SECURITY', 'starttls').lower()
+    try:
+        with (smtplib.SMTP_SSL(host, port, timeout=15, context=ssl.create_default_context()) if security == 'ssl' else smtplib.SMTP(host, port, timeout=15)) as smtp:
+            if security == 'starttls': smtp.starttls(context=ssl.create_default_context())
+            if os.environ.get('MIMS_SMTP_USER'): smtp.login(os.environ['MIMS_SMTP_USER'], os.environ.get('MIMS_SMTP_PASSWORD', ''))
+            smtp.send_message(msg)
+        return 'sent'
+    except Exception as e:
+        print(f'[MIMS] Email to {to} failed: {type(e).__name__}: {e}', flush=True); return 'failed'
+
+def send_sms(phone, body):
+    """Send through the Fast2SMS Quick SMS API when MIMS_FAST2SMS_KEY is set (paid, Indian numbers only).
+    Returns 'sent', 'failed', or 'simulated' when no gateway is configured."""
+    key, number = os.environ.get('MIMS_FAST2SMS_KEY'), re.sub(r'\D', '', phone or '')[-10:]
+    if not key or len(number) != 10: return 'simulated'
+    req = urllib.request.Request('https://www.fast2sms.com/dev/bulkV2', method='POST',
+        data=json.dumps({'route': 'q', 'message': body, 'numbers': number}).encode(),
+        headers={'authorization': key, 'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res: ok = json.load(res).get('return') is True
+        return 'sent' if ok else 'failed'
+    except Exception as e:
+        print(f'[MIMS] SMS to {number} failed: {type(e).__name__}: {e}', flush=True); return 'failed'
+
+def deliver_otp(user, code):
+    """Send the one-time code by email and SMS. A channel that is not configured is simulated:
+    the message is printed in the server terminal, which plays the role of the inbox or phone in a demo."""
+    text = f'Your MIMS login code is {code}. It expires in {OTP_TTL_MIN} minutes. Do not share it with anyone.'
+    result = {'email': send_email(user['email'], 'Your MIMS login code', text + '\n\nIf you did not try to log in, change your password.'),
+              'sms': send_sms(user['phone'], text)}
+    for channel, to in (('email', user['email']), ('sms', user['phone'] or '-')):
+        if result[channel] != 'sent': print(f'[MIMS {channel.upper()} {"simulator" if result[channel] == "simulated" else "fallback"}] To {to}: {text}', flush=True)
+    return result
 
 def today(): return str(dt.datetime.now(IST).date())
 def now(): return dt.datetime.now(IST).strftime('%Y-%m-%dT%H:%M')
@@ -150,6 +206,7 @@ def init():
         CREATE UNIQUE INDEX IF NOT EXISTS one_active_registration ON registrations(student,slot) WHERE status='Registered';
         CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY,user INTEGER REFERENCES users(id),type TEXT,message TEXT,unread INTEGER DEFAULT 1,created TEXT DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor INTEGER REFERENCES users(id),action TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS login_challenges(token TEXT PRIMARY KEY,user INTEGER REFERENCES users(id),salt TEXT,code_hash TEXT,expires TEXT,attempts INTEGER DEFAULT 0,sends INTEGER DEFAULT 1,last_sent TEXT);
         ''')
         if db.execute('SELECT COUNT(*) FROM users').fetchone()[0]: return
         aanya = add_user(db, 'Aanya Goel', 'student@mims.demo', 'Student', roll='24UCS119', branch='CSE', batch=2028, cgpa=8.4, phone='9876500119')
@@ -242,10 +299,36 @@ class Handler(SimpleHTTPRequestHandler):
                 if chosen and chosen != user['role']: return refuse(f'selected user type {chosen} does not match', 'This account is not registered under the selected user type.', 'WRONG_USER_TYPE')
                 if user['status'] == 'Pending': return refuse('account pending approval', 'Your account is waiting for administrator approval.', 'ACCOUNT_PENDING')
                 if user['status'] != 'Active': return refuse('account inactive', 'This account is inactive. Contact the administrator.', 'ACCOUNT_INACTIVE')
-                audit(db, user['id'], f'Logged in as {user["role"]}')
-                token = secrets.token_urlsafe(32)
-                db.execute('INSERT INTO sessions VALUES(?,?,?)', (token, user['id'], str(dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=12))))
-                return self.send_json({'ok': True}, cookie=f'mims_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200')
+                if TWO_FACTOR:   # step 1 passed: send a one-time code instead of starting the session
+                    challenge = secrets.token_urlsafe(24)
+                    db.execute('DELETE FROM login_challenges WHERE user=?', (user['id'],))
+                    db.execute('INSERT INTO login_challenges(token,user) VALUES(?,?)', (challenge, user['id']))
+                    return self.send_code(db, user, challenge)
+                return self.start_session(db, user)
+            if path in ('/api/verify_otp', '/api/resend_otp') and method == 'POST':
+                ch = db.execute('SELECT * FROM login_challenges WHERE token=?', (str(data.get('challenge', '')),)).fetchone()
+                if not ch or ch['expires'] < utcnow().isoformat(timespec='seconds'):
+                    if ch: db.execute('DELETE FROM login_challenges WHERE token=?', (ch['token'],))
+                    return self.send_json({'error': 'This code has expired. Please log in again.', 'code': 'OTP_EXPIRED'}, 401)
+                user = db.execute("SELECT * FROM users WHERE id=? AND status='Active'", (ch['user'],)).fetchone()
+                if not user: return self.send_json({'error': 'This account is no longer active.', 'code': 'ACCOUNT_INACTIVE'}, 401)
+                if path.endswith('resend_otp'):
+                    wait = OTP_RESEND_SECONDS - int((utcnow() - dt.datetime.fromisoformat(ch['last_sent'])).total_seconds())
+                    if wait > 0: return self.send_json({'error': f'Please wait {wait} seconds before asking for a new code.', 'code': 'OTP_WAIT'}, 429)
+                    if ch['sends'] >= OTP_MAX_SENDS: return self.send_json({'error': 'Too many codes requested. Please log in again.', 'code': 'OTP_LIMIT'}, 429)
+                    db.execute('UPDATE login_challenges SET sends=sends+1,attempts=0 WHERE token=?', (ch['token'],))
+                    return self.send_code(db, user, ch['token'])
+                code = re.sub(r'\D', '', str(data.get('code', '')))
+                if not hmac.compare_digest(ch['code_hash'], hash_password(code, ch['salt'])):
+                    left = OTP_MAX_ATTEMPTS - ch['attempts'] - 1
+                    audit(db, user['id'], 'Login failed (wrong one-time code)')
+                    if left <= 0:
+                        db.execute('DELETE FROM login_challenges WHERE token=?', (ch['token'],))
+                        return self.send_json({'error': 'Too many wrong codes. Please log in again.', 'code': 'OTP_LOCKED'}, 401)
+                    db.execute('UPDATE login_challenges SET attempts=attempts+1 WHERE token=?', (ch['token'],))
+                    return self.send_json({'error': f'Incorrect code. {left} attempt{"s" if left > 1 else ""} left.', 'code': 'OTP_INVALID'}, 401)
+                db.execute('DELETE FROM login_challenges WHERE token=?', (ch['token'],))
+                return self.start_session(db, user)
             cookie = SimpleCookie(); cookie.load(self.headers.get('Cookie', ''))
             token = cookie['mims_session'].value if 'mims_session' in cookie else ''
             user = db.execute("SELECT u.* FROM users u JOIN sessions s ON s.user=u.id WHERE s.token=? AND s.expires>? AND u.status='Active'", (token, str(dt.datetime.now(dt.timezone.utc)))).fetchone()
@@ -379,6 +462,24 @@ class Handler(SimpleHTTPRequestHandler):
             else: return self.send_json({'error': 'Not found.'}, 404)
             self.send_json({'ok': True})
 
+    def start_session(self, db, user):
+        audit(db, user['id'], f'Logged in as {user["role"]}')
+        token = secrets.token_urlsafe(32)
+        db.execute('INSERT INTO sessions VALUES(?,?,?)', (token, user['id'], str(dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=12))))
+        return self.send_json({'ok': True}, cookie=f'mims_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200')
+
+    def send_code(self, db, user, challenge):
+        """Store a fresh 6-digit code (hashed, never in plain text) and send it. The database is committed first,
+        so a slow email or SMS server never holds the database lock."""
+        code, salt = f'{secrets.randbelow(10 ** 6):06d}', secrets.token_hex(8)
+        db.execute('UPDATE login_challenges SET salt=?,code_hash=?,expires=?,last_sent=? WHERE token=?',
+                   (salt, hash_password(code, salt), (utcnow() + dt.timedelta(minutes=OTP_TTL_MIN)).isoformat(timespec='seconds'), utcnow().isoformat(timespec='seconds'), challenge))
+        db.commit()
+        delivery = deliver_otp(user, code)
+        audit(db, user['id'], f'Password accepted; one-time code sent (email {delivery["email"]}, SMS {delivery["sms"]})')
+        return self.send_json({'otp_required': True, 'challenge': challenge, 'email': mask_email(user['email']), 'phone': mask_phone(user['phone']),
+                               'delivery': delivery, 'expires_in': OTP_TTL_MIN * 60, 'resend_in': OTP_RESEND_SECONDS})
+
     def state(self, db, user):
         send_reminders(db)
         uid, role = user['id'], user['role']
@@ -413,4 +514,5 @@ if __name__ == '__main__':
     init()
     port = int(os.environ.get('PORT', '8765'))
     print(f'MIMS running at http://127.0.0.1:{port}', flush=True)
+    print(f'Two-step verification: {"on" if TWO_FACTOR else "off"} · email: {"SMTP " + os.environ["MIMS_SMTP_HOST"] if os.environ.get("MIMS_SMTP_HOST") else "simulated in this terminal"} · SMS: {"Fast2SMS" if os.environ.get("MIMS_FAST2SMS_KEY") else "simulated in this terminal"}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

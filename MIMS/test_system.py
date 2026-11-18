@@ -2,8 +2,11 @@
 the business rules BR-001 to BR-011, sign-up per user type and role-based access.
 Each test talks to a real HTTP server backed by a temporary SQLite database."""
 import concurrent.futures
+import datetime as dt
 import http.cookiejar
 import json
+import os
+import socketserver
 import tempfile
 import threading
 import unittest
@@ -17,6 +20,10 @@ class SystemTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         server.DB = Path(cls.temp.name) / 'test.sqlite3'
+        server.TWO_FACTOR = True
+        # Capture one-time codes instead of emailing them; the real senders are tested separately below.
+        cls.codes = {}
+        server.deliver_otp = lambda user, code: (cls.codes.__setitem__(user['email'], code), {'email': 'sent', 'sms': 'sent'})[1]
         server.init()
         cls.http = server.ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         threading.Thread(target=cls.http.serve_forever, daemon=True).start()
@@ -32,8 +39,14 @@ class SystemTests(unittest.TestCase):
             with c.open(req) as r: return r.status, json.load(r)
         except urllib.error.HTTPError as e:
             with e: return e.code, json.load(e)
+    def verify(self, c, res, email):
+        """Step 2 of login: answer the one-time code challenge with the code that was 'sent'."""
+        self.assertEqual(res[0], 200, res[1]); self.assertTrue(res[1].get('otp_required'), res[1])
+        return self.call(c, 'verify_otp', {'challenge': res[1]['challenge'], 'code': self.codes[email]})
+    def login(self, c, email, password='Demo@123', role=None):
+        return self.verify(c, self.call(c, 'login', {'email': email, 'password': password, **({'role': role} if role else {})}), email)
     def client(self, email):
-        c = self.opener(); self.expect(self.call(c, 'login', {'email': email, 'password': 'Demo@123'}), 200); return c
+        c = self.opener(); self.expect(self.login(c, email), 200); return c
     def expect(self, result, status, code=None):
         self.assertEqual(result[0], status, result[1])
         if code: self.assertEqual(result[1].get('code'), code, result[1])
@@ -49,7 +62,7 @@ class SystemTests(unittest.TestCase):
         self.expect(self.call(c, 'signup', {**student, 'roll': ''}), 400)
         self.expect(self.call(c, 'signup', {**student, 'phone': '123'}), 400)
         self.expect(self.call(c, 'signup', {**base, 'role': 'Admin', 'email': 'boss@example.test'}), 400, 'INVALID_ROLE')
-        self.expect(self.call(c, 'signup', student), 200)                       # students are active immediately and logged in
+        self.expect(self.verify(c, self.call(c, 'signup', student), 'riya@example.test'), 200)   # students are active immediately, then verify the code
         me = self.state(c)['user']
         self.assertEqual((me['role'], me['name'], me['roll']), ('Student', 'Riya K. Sharma', '24UCS150'))
         self.expect(self.call(c, 'signup', student), 409)
@@ -64,7 +77,7 @@ class SystemTests(unittest.TestCase):
         self.assertEqual((neha['status'], neha['domain'], neha['experience']), ('Pending', 'Data Science', 5))
         self.expect(self.call(admin, 'user', {'id': neha['id'], 'status': 'Active'}), 200)
         self.expect(self.call(c, 'login', {'email': 'neha@example.test', 'password': 'Password@123', 'role': 'Student'}), 401, 'WRONG_USER_TYPE')
-        self.expect(self.call(c, 'login', {'email': 'neha@example.test', 'password': 'Password@123', 'role': 'Interviewer'}), 200)
+        self.expect(self.login(c, 'neha@example.test', 'Password@123', 'Interviewer'), 200)
         self.assertTrue(any('approved' in n['message'] for n in self.state(c)['notifications']))
         self.expect(self.call(admin, 'user', {'id': neha['id'], 'status': 'Inactive'}), 200)
         self.expect(self.call(c, 'state'), 401)                                  # deactivation ends the session
@@ -147,13 +160,99 @@ class SystemTests(unittest.TestCase):
         self.expect(self.call(c, 'login', {'email': 'panth@mims.demo', 'password': 'Wrong@123'}), 401, 'INVALID_CREDENTIALS')
         self.expect(self.call(c, 'login', {'email': 'nobody@mims.demo', 'password': 'Demo@123'}), 401, 'INVALID_CREDENTIALS')
         self.expect(self.call(c, 'login', {'email': 'panth@mims.demo', 'password': 'Demo@123', 'role': 'Interviewer'}), 401, 'WRONG_USER_TYPE')
-        self.expect(self.call(c, 'login', {'email': 'panth@mims.demo', 'password': 'Demo@123', 'role': 'Student'}), 200)
+        self.expect(self.login(c, 'panth@mims.demo', role='Student'), 200)
         self.expect(self.call(c, 'logout', {}), 200)
         log = [(a['name'], a['action']) for a in self.state(self.client('admin@mims.demo'))['audit']]
         for entry in [('Panth Moradia', 'Login failed (wrong password)'), ('Unknown user', 'Login failed (unknown email) for unknown email nobody@mims.demo'),
                       ('Panth Moradia', 'Login failed (selected user type Interviewer does not match)'), ('Panth Moradia', 'Logged in as Student'), ('Panth Moradia', 'Logged out')]:
             self.assertIn(entry, log)
         self.assertFalse(any('Wrong@123' in a for _, a in log), 'passwords are never written to the audit log')
+
+    def test_two_step_login(self):
+        c = self.opener()
+        step1 = self.call(c, 'login', {'email': 'meera@mims.demo', 'password': 'Demo@123', 'role': 'Interviewer'})
+        self.expect(step1, 200); r = step1[1]
+        self.assertEqual((r['otp_required'], r['email'], r['phone']), (True, 'm***@mims.demo', '******0202'))
+        self.expect(self.call(c, 'state'), 401)                                              # no session until the code is verified
+        code = self.codes['meera@mims.demo']; wrong = '000000' if code != '000000' else '111111'
+        bad = self.call(c, 'verify_otp', {'challenge': r['challenge'], 'code': wrong})
+        self.expect(bad, 401, 'OTP_INVALID'); self.assertIn('4 attempts left', bad[1]['error'])
+        self.expect(self.call(c, 'resend_otp', {'challenge': r['challenge']}), 429, 'OTP_WAIT')   # 30-second gap between codes
+        self.expect(self.call(c, 'verify_otp', {'challenge': r['challenge'], 'code': code}), 200)
+        self.assertEqual(self.state(c)['user']['email'], 'meera@mims.demo')
+        self.expect(self.call(c, 'verify_otp', {'challenge': r['challenge'], 'code': code}), 401, 'OTP_EXPIRED')   # single use
+        # Five wrong codes end the attempt.
+        r2 = self.call(self.opener(), 'login', {'email': 'meera@mims.demo', 'password': 'Demo@123'})[1]
+        wrong = '000000' if self.codes['meera@mims.demo'] != '000000' else '111111'
+        for _ in range(4): self.expect(self.call(c, 'verify_otp', {'challenge': r2['challenge'], 'code': wrong}), 401, 'OTP_INVALID')
+        self.expect(self.call(c, 'verify_otp', {'challenge': r2['challenge'], 'code': wrong}), 401, 'OTP_LOCKED')
+        self.expect(self.call(c, 'verify_otp', {'challenge': r2['challenge'], 'code': self.codes['meera@mims.demo']}), 401, 'OTP_EXPIRED')
+        # An expired code is refused; a resend after the gap issues a new code and the old one stops working.
+        r3 = self.call(self.opener(), 'login', {'email': 'meera@mims.demo', 'password': 'Demo@123'})[1]
+        old = self.codes['meera@mims.demo']
+        with server.connect() as db:
+            db.execute('UPDATE login_challenges SET last_sent=? WHERE token=?', ((server.utcnow() - dt.timedelta(seconds=40)).isoformat(timespec='seconds'), r3['challenge']))
+        self.expect(self.call(c, 'resend_otp', {'challenge': r3['challenge']}), 200)
+        new = self.codes['meera@mims.demo']
+        if new != old: self.expect(self.call(c, 'verify_otp', {'challenge': r3['challenge'], 'code': old}), 401, 'OTP_INVALID')
+        with server.connect() as db:
+            db.execute('UPDATE login_challenges SET expires=? WHERE token=?', ((server.utcnow() - dt.timedelta(seconds=1)).isoformat(timespec='seconds'), r3['challenge']))
+        self.expect(self.call(c, 'verify_otp', {'challenge': r3['challenge'], 'code': new}), 401, 'OTP_EXPIRED')
+        # Codes are stored hashed and never written to the audit log.
+        with server.connect() as db:
+            self.assertFalse(db.execute('SELECT 1 FROM login_challenges WHERE code_hash=?', (new,)).fetchone())
+        log = [a['action'] for a in self.state(self.client('admin@mims.demo'))['audit']]
+        self.assertFalse(any(new in a or old in a for a in log))
+        self.assertIn('Login failed (wrong one-time code)', log)
+
+    def test_email_is_sent_over_smtp(self):
+        """send_email talks real SMTP; a tiny local SMTP server stands in for Gmail."""
+        received = []
+        class SMTPHandler(socketserver.StreamRequestHandler):
+            def handle(self):
+                say = lambda line: self.wfile.write((line + '\r\n').encode())
+                say('220 test ready'); data = None
+                for raw in self.rfile:
+                    line = raw.decode().rstrip('\r\n')
+                    if data is not None:
+                        if line == '.': received.append('\n'.join(data)); data = None; say('250 queued')
+                        else: data.append(line)
+                    elif line.upper().startswith('EHLO'): say('250 localhost')
+                    elif line.upper().startswith('DATA'): data = []; say('354 go ahead')
+                    elif line.upper().startswith('QUIT'): say('221 bye'); break
+                    else: say('250 ok')
+        smtp = socketserver.ThreadingTCPServer(('127.0.0.1', 0), SMTPHandler)
+        threading.Thread(target=smtp.serve_forever, daemon=True).start()
+        env = {'MIMS_SMTP_HOST': '127.0.0.1', 'MIMS_SMTP_PORT': str(smtp.server_address[1]), 'MIMS_SMTP_SECURITY': 'none', 'MIMS_SMTP_FROM': 'mims@example.test'}
+        old = {k: os.environ.get(k) for k in env}
+        try:
+            os.environ.update(env)
+            self.assertEqual(server.send_email('riya@example.test', 'Your MIMS login code', 'Your MIMS login code is 123456.'), 'sent')
+            self.assertEqual(server.send_email('student@mims.demo', 'x', 'y'), 'simulated')     # demo accounts never leave the machine
+        finally:
+            for k, v in old.items(): os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+            smtp.shutdown(); smtp.server_close()
+        self.assertTrue(received and 'To: riya@example.test' in received[0] and '123456' in received[0])
+        self.assertEqual(server.send_email('riya@example.test', 'x', 'y'), 'simulated')           # no SMTP server configured
+
+    def test_sms_request(self):
+        """send_sms builds the Fast2SMS request; the network call is replaced, so no SMS is sent."""
+        sent = []
+        class FakeResponse:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self, *a): return b'{"return": true, "message": ["SMS sent successfully."]}'
+        real = server.urllib.request.urlopen
+        server.urllib.request.urlopen = lambda req, timeout=None: (sent.append(req), FakeResponse())[1]
+        os.environ['MIMS_FAST2SMS_KEY'] = 'test-key'
+        try:
+            self.assertEqual(server.send_sms('+91 98765 00119', 'Your MIMS login code is 123456.'), 'sent')
+        finally:
+            server.urllib.request.urlopen = real; os.environ.pop('MIMS_FAST2SMS_KEY')
+        req = sent[0]; body = json.loads(req.data)
+        self.assertEqual((req.full_url, req.get_method(), req.get_header('Authorization')), ('https://www.fast2sms.com/dev/bulkV2', 'POST', 'test-key'))
+        self.assertEqual((body['route'], body['numbers']), ('q', '9876500119'))
+        self.assertEqual(server.send_sms('9876500119', 'x'), 'simulated')                         # no gateway configured
 
     def test_role_visibility(self):
         student = self.client('student@mims.demo'); coord = self.client('coordinator@mims.demo'); admin = self.client('admin@mims.demo'); sharma = self.client('interviewer@mims.demo')
